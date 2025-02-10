@@ -1,0 +1,17 @@
+[
+    {
+        "id": 8004,
+        "name": "alma9",
+        "url": "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.5-20241120.x86_64.qcow2",
+        "tags": "alma-linux-template,9,cloudinit",
+        "vendor": "dnf.yaml"
+    },
+    {
+        "id": 8005,
+        "name": "fedora41",
+        "url": "https://ftp.riken.jp/Linux/fedora/releases/41/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2",
+        "tags": "fedora-template,9,cloudinit",
+        "vendor": "dnf.yaml"
+    }
+]
+    
