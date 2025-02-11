@@ -2,7 +2,7 @@ qemu-img resize base.qcow2 32G
 virt-customize -a base.qcow2 --firstboot-command 'sudo truncate -s 0 /etc/machine-id'
 virt-customize -a base.qcow2 --firstboot-command 'sudo rm /var/lib/dbus/machine-id'
 virt-customize -a base.qcow2 --firstboot-command 'sudo ln -s /etc/machine-id /var/lib'
-<vendor commands>
+# <vendor commands>
 qm create $vmid --name "ubuntu-$vmid-cloudinit" --ostype l26 \
     --memory 1024 \
     --agent 1 \

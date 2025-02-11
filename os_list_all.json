@@ -4,21 +4,21 @@
         "name": "ubuntu2404",
         "url": "https://cloud-images.ubuntu.com/noble/20250122/noble-server-cloudimg-amd64.img",
         "tags": "ubuntu-template,24.04,cloudinit",
-        "vendor": "apt.yaml"
+        "vendor": "ubuntu.yaml"
     },
     {
         "id": 8002,
         "name": "debian12",
-        "url": "https://cdimage.debian.org/images/cloud/bookworm/20250115-1993/debian-12-generic-amd64-20250115-1993.qcow2",
+        "url": "https://cloud.debian.org/images/cloud/bookworm/20250210-2019/debian-12-generic-amd64-20250210-2019.qcow2",
         "tags": "debian-template,12,cloudinit",
-        "vendor": "apt.yaml"
+        "vendor": "debian.yaml"
     },
     {
         "id": 8003,
         "name": "debian11",
-        "url": "https://cdimage.debian.org/images/cloud/bullseye/20241202-1949/debian-11-generic-arm64-20241202-1949.qcow2",
+        "url": "https://cloud.debian.org/images/cloud/bullseye/20241202-1949/debian-11-generic-amd64-20241202-1949.qcow2",
         "tags": "debian-template,11,cloudinit",
-        "vendor": "apt.yaml"
+        "vendor": "debian.yaml"
     },
     {
         "id": 8004,

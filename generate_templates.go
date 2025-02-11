@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -39,6 +38,7 @@ func init() {
 
 func main() {
 	jsonFilePath := "os_list.json"
+	os.MkdirAll("os", os.ModePerm)
 
 	fileContent, err := os.ReadFile(jsonFilePath)
 	if err != nil {
@@ -51,13 +51,15 @@ func main() {
 	}
 
 	for _, img := range images {
-		filePath := filepath.Join(".", img.Name)
+		// Update the file path to include the os folder
+		filePath := filepath.Join("os", img.Name)
 
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			log.Info().Str("file", img.Name).Msg("Starting download")
 
 			if err := downloadFile(filePath, img.URL); err != nil {
 				log.Error().Err(err).Str("file", img.Name).Msg("Download failed")
+				cleanupBaseFile()
 				continue
 			}
 
@@ -70,12 +72,14 @@ func main() {
 		baseFilePath := "base.qcow2"
 		if err := copyFile(filePath, baseFilePath); err != nil {
 			log.Error().Err(err).Str("file", img.Name).Msg("Copying failed")
+			cleanupBaseFile()
 			continue
 		}
 
 		// Execute the commands
 		if err := executeCommands(baseFilePath, img); err != nil {
 			log.Error().Err(err).Str("file", img.Name).Msg("Command execution failed")
+			cleanupBaseFile()
 			continue
 		}
 	}
@@ -151,16 +155,24 @@ func executeCommands(filePath string, img Image) error {
 			exec.Command("qemu-img", "resize", "-f", "qcow2", filePath, "32G"),
 		},
 		{
+			"Relabel SELinux",
+			exec.Command("virt-customize", "-a", filePath, "--selinux-relabel"),
+		},
+		{
+			"virt-customize update command",
+			exec.Command("virt-customize", "-a", filePath, "--update"),
+		},
+		{
 			"First boot command to truncate machine-id",
-			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "sudo truncate -s 0 /etc/machine-id"),
+			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "truncate -s 0 /etc/machine-id"),
 		},
 		{
 			"First boot command to remove machine-id",
-			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "sudo rm /var/lib/dbus/machine-id"),
+			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "rm /var/lib/dbus/machine-id"),
 		},
 		{
 			"First boot command to link machine-id",
-			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "sudo ln -s /etc/machine-id /var/lib"),
+			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "ln -s /etc/machine-id /var/lib"),
 		},
 		{
 			"Set Timezone",
@@ -170,26 +182,27 @@ func executeCommands(filePath string, img Image) error {
 
 	// Load vendor commands
 	vendorFilePath := filepath.Join("vendors", img.Vendor)
-	vendorFileContent, err := ioutil.ReadFile(vendorFilePath)
+	vendorFileContent, err := os.ReadFile(vendorFilePath)
 	if err != nil {
 		log.Error().Err(err).Str("vendor", img.Vendor).Msg("Error reading vendor file")
+		cleanupBaseFile()
 		return err
 	}
 
 	var vendor Vendor
 	if err := yaml.Unmarshal(vendorFileContent, &vendor); err != nil {
 		log.Error().Err(err).Str("vendor", img.Vendor).Msg("Error parsing vendor file")
+		cleanupBaseFile()
 		return err
 	}
 
 	for _, cmd := range vendor.RunCmd {
-		command := fmt.Sprintf("sudo %s", cmd)
 		commands = append(commands, struct {
 			name string
 			cmd  *exec.Cmd
 		}{
 			name: fmt.Sprintf("Vendor command: %s", cmd),
-			cmd:  exec.Command("virt-customize", "-a", filePath, "--firstboot-command", command),
+			cmd:  exec.Command("virt-customize", "-a", filePath, "--firstboot-command", cmd),
 		})
 	}
 
@@ -341,4 +354,12 @@ func resolveSSHKeysPath() (string, error) {
 	}
 
 	return path, nil
+}
+
+func cleanupBaseFile() {
+	baseFilePath := "base.qcow2"
+	if _, err := os.Stat(baseFilePath); err == nil {
+		os.Remove(baseFilePath)
+		log.Info().Str("file", baseFilePath).Msg("Cleanup: base.qcow2 deleted")
+	}
 }
