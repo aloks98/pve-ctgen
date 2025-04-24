@@ -8,15 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/schollz/progressbar/v3"
-	"gopkg.in/yaml.v2"
 )
 
 type Image struct {
@@ -33,12 +32,38 @@ type Vendor struct {
 
 func init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	output := zerolog.ConsoleWriter{
+		Out:        os.Stderr,
+		TimeFormat: time.RFC3339,
+		NoColor:    false,
+		FormatLevel: func(i interface{}) string {
+			return strings.ToUpper(fmt.Sprintf("%-6s", i))
+		},
+		FormatMessage: func(i interface{}) string {
+			return fmt.Sprintf("| %s", i)
+		},
+		FormatFieldName: func(i interface{}) string {
+			return fmt.Sprintf("%s=", i)
+		},
+		FormatFieldValue: func(i interface{}) string {
+			return fmt.Sprintf("%s", i)
+		},
+	}
+	log.Logger = zerolog.New(output).With().Timestamp().Logger()
 }
 
 func main() {
+	isoFilePath := "/var/lib/vz/template/iso"
+	snippetsFilePath := "/var/lib/vz/snippets"
 	jsonFilePath := "os_list.json"
-	os.MkdirAll("os", os.ModePerm)
+
+	if err := os.MkdirAll(isoFilePath, 0755); err != nil {
+		log.Fatal().Err(err).Msg("Error creating /var/lib/vz/template/iso folder to store os images")
+	}
+
+	if err := os.MkdirAll(snippetsFilePath, 0755); err != nil {
+		log.Fatal().Err(err).Msg("Error creating /var/lib/vz/snippets folder to store cloudinit config")
+	}
 
 	fileContent, err := os.ReadFile(jsonFilePath)
 	if err != nil {
@@ -52,7 +77,7 @@ func main() {
 
 	for _, img := range images {
 		// Update the file path to include the os folder
-		filePath := filepath.Join("os", img.Name)
+		filePath := filepath.Join(isoFilePath, img.Name)
 
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			log.Info().Str("file", img.Name).Msg("Starting download")
@@ -146,6 +171,13 @@ func executeCommands(filePath string, img Image) error {
 		return fmt.Errorf("VM cleanup failed: %w", err)
 	}
 
+	cloudinitFilePath := filepath.Join("/var/lib/vz/snippets/", img.Vendor)
+	configFilePath := filepath.Join("cloudinit", img.Vendor)
+	if err := copyFile(configFilePath, cloudinitFilePath); err != nil {
+		log.Error().Err(err).Str("file", img.Name).Msg("Copying cloudinit config failed")
+		cleanupBaseFile()
+	}
+
 	commands := []struct {
 		name string
 		cmd  *exec.Cmd
@@ -154,62 +186,6 @@ func executeCommands(filePath string, img Image) error {
 			"Resize disk",
 			exec.Command("qemu-img", "resize", "-f", "qcow2", filePath, "32G"),
 		},
-		{
-			"Relabel SELinux",
-			exec.Command("virt-customize", "-a", filePath, "--selinux-relabel"),
-		},
-		{
-			"virt-customize update command",
-			exec.Command("virt-customize", "-a", filePath, "--update"),
-		},
-		{
-			"First boot command to truncate machine-id",
-			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "truncate -s 0 /etc/machine-id"),
-		},
-		{
-			"First boot command to remove machine-id",
-			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "rm /var/lib/dbus/machine-id"),
-		},
-		{
-			"First boot command to link machine-id",
-			exec.Command("virt-customize", "-a", filePath, "--firstboot-command", "ln -s /etc/machine-id /var/lib"),
-		},
-		{
-			"Set Timezone",
-			exec.Command("virt-customize", "-a", filePath, "--timezone", "Asia/Kolkata"),
-		},
-	}
-
-	// Load vendor commands
-	vendorFilePath := filepath.Join("vendors", img.Vendor)
-	vendorFileContent, err := os.ReadFile(vendorFilePath)
-	if err != nil {
-		log.Error().Err(err).Str("vendor", img.Vendor).Msg("Error reading vendor file")
-		cleanupBaseFile()
-		return err
-	}
-
-	var vendor Vendor
-	if err := yaml.Unmarshal(vendorFileContent, &vendor); err != nil {
-		log.Error().Err(err).Str("vendor", img.Vendor).Msg("Error parsing vendor file")
-		cleanupBaseFile()
-		return err
-	}
-
-	for _, cmd := range vendor.RunCmd {
-		commands = append(commands, struct {
-			name string
-			cmd  *exec.Cmd
-		}{
-			name: fmt.Sprintf("Vendor command: %s", cmd),
-			cmd:  exec.Command("virt-customize", "-a", filePath, "--firstboot-command", cmd),
-		})
-	}
-
-	commands = append(commands, []struct {
-		name string
-		cmd  *exec.Cmd
-	}{
 		{
 			"Create VM",
 			exec.Command("qm", "create", fmt.Sprintf("%d", img.ID),
@@ -257,23 +233,17 @@ func executeCommands(filePath string, img Image) error {
 			"Set credentials",
 			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--ciuser", "root", "--cipassword", "alok@admin1"),
 		},
-	}...)
+		{
+			"Set cloud-init user data",
+			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--cicustom", fmt.Sprintf("user=local:snippets/%s", img.Vendor)),
+		},
+	}
 
 	// Execute all commands
 	for _, c := range commands {
 		if err := runCommandWithStreaming(c.cmd, c.name); err != nil {
 			return err
 		}
-	}
-
-	// Configure SSH keys
-	if sshPath, err := resolveSSHKeysPath(); err == nil {
-		sshCmd := exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--sshkeys", sshPath)
-		if err := runCommandWithStreaming(sshCmd, "Set SSH keys"); err != nil {
-			log.Warn().Err(err).Msg("Failed to set SSH keys")
-		}
-	} else {
-		log.Warn().Err(err).Msg("SSH keys not configured")
 	}
 
 	templateCmd := exec.Command("qm", "template", fmt.Sprintf("%d", img.ID))
@@ -307,10 +277,18 @@ func checkAndDestroyVM(vmid int) error {
 }
 
 func runCommandWithStreaming(cmd *exec.Cmd, name string) error {
-	log.Info().Str("name", name).Str("command", cmd.String()).Msg("Executing command")
+	log.Info().
+		Str("command", cmd.String()).
+		Msg(fmt.Sprintf("🚀 Executing: %s", name))
 
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
@@ -319,18 +297,21 @@ func runCommandWithStreaming(cmd *exec.Cmd, name string) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	streamOutput := func(pipe io.Reader) {
+	streamOutput := func(pipe io.Reader, prefix string) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(pipe)
 		for scanner.Scan() {
-			log.Info().
-				Str("", scanner.Text()).
-				Msg("stdout")
+			output := scanner.Text()
+			if prefix == "stderr" {
+				log.Error().Msg(output)
+			} else {
+				log.Info().Msg(output)
+			}
 		}
 	}
 
-	go streamOutput(stdout)
-	go streamOutput(stderr)
+	go streamOutput(stdout, "stdout")
+	go streamOutput(stderr, "stderr")
 
 	wg.Wait()
 
@@ -338,22 +319,8 @@ func runCommandWithStreaming(cmd *exec.Cmd, name string) error {
 		return fmt.Errorf("command failed: %w", err)
 	}
 
-	log.Info().Str("name", name).Msg("Command completed successfully")
+	log.Info().Msg(fmt.Sprintf("✅ Completed: %s", name))
 	return nil
-}
-
-func resolveSSHKeysPath() (string, error) {
-	usr, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-
-	path := filepath.Join(usr.HomeDir, ".ssh", "authorized_keys")
-	if _, err := os.Stat(path); err != nil {
-		return "", err
-	}
-
-	return path, nil
 }
 
 func cleanupBaseFile() {

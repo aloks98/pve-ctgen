@@ -1,0 +1,117 @@
+#cloud-config
+hostname: almalinux
+package_upgrade: true
+locale: en_US
+timezone: Asia/Kolkata
+
+users:
+  - name: root
+    lock_passwd: false
+    passwd: $6$8556df47c6324b80$RqcOZ/wVURwlPLThhY7rVrjV4/1EzsYROgxFTHOY9HJSvFgOtUuTZoLMh69foON7TzONkq35PAger1v47KTvs1
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFzsZwR43Gm8vUkx9s3aJl3mcmCJ8tl5x0S+GazG0iDV aloksahoo@mac
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCSP1eJuWZCZ4lz6kbTjWBzz/75mmFZ1ePODp/BVBQRCqg2945MlsbGSiUeNfEDzXCzJO4b2csMb9pBQUQ06MpLisv0yuZdNzVPX6ytMwp3FD85uDyerbPhjPGR3urSMt31TjvPNM61PPZcvxzRjr/tkk3kjFWNf6uNW38axsoGQFDMcMnEdM9SiGfFeTVews9SC+OU0mEE7/A4Iiq7fX4nqLdFyC7n8MGoLnAyRdwFTspQK2PxhJbOoJKZCAYnfnsTPm+owY5+zCnghESVZn+WU5LRAkkXs4JIUXxDrDwRZhupMPAPC013zJJ4SQx2yKaspRm8fsqmbDQS2Dt9BVAVnNb44++gL7h5LseOvpVV46Ovaz9SaCI7nB04hBeJErM4auP8Hd+SI7cJtJDMtSKnzlEI7NxDm1myqvXDQpnupxCHaxE+4QYFJ7SjWgH1ToFDhHe7VDjEFmNnGWdggdGQzFW3OLkkgPupORvoak5TVca0U4QQqOqVFTom0px1hDx4roYT7lMw1VmDxRk8ajFiaoNWa7EDGnbyIJIGxa7sXPD5qHE79vxhe0LDb5/Bc++6Pv1gZroMLeNzISj35wp6tfc94LGf+eXqdnTr+0psa5/NF4UzuMJwNzRt1ZDkJSifysaIs89ODD5wZa7CCDS14dHBNUwRqSOf2Z/2Ksa0+Q== root@tokyo
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC1Mx+9qMZxwA6OVSeBDMQS70xe+vCzTeOtc0kDfzsOP744GZtKGPwPDlNoGoNc+fOzomPpLtzNCl8hQ1gUWW4nhSwEeFwTyUcz4gl/+/pNcfzdLy1xcXB18oJk+BoFBLBdiEru5DCs66G3B7MlDHKzu0z7QpVt/GgZyA5qn3Re6dUhWGqXfS2hBjG/H4AM0J1TlEYvcOE0E5GRu+UQOZkwAFYBHeji1VJfWIpbv+K2tbMKnpr+sJDzS3GTcRh8CVeGU0rQu4dqXBij/a4uNyIuRac9BsiPJ3bA5LR2q2PQHgpIlQJOFFnEwmwkgZ3++TZb/YvhepigViJVUoPXqPpcpaWYE/nt4ygr0dVfxGMrRqtZB+WCpEOev3SBcqlXgDym5Uhx4aAiYbVppsw9+p+YGNgAA7o+GI78R0CLZ073frsJlBmwjbxnYLaDDGUXAzWBFoW23mzfFXPz78tHD6rLXGdWgUktC3bUJrGQf9zYljQzAITAMSW8dpyiDK2Bq3MRUjz1gCdFZ6pNqrfy+vp4i7eBOkCAsIgETG+RYZv5u5VrqLOqkiJUqU32j/94n2WkNG6AWewR6ZurdUylhz3ToV0TXkJP0mCFD7kEPCxFVHc3DoP13rMzgnPaJl+snDC9BT25swb1xn8W+jQPpSwtbHw8vQcybP3vFFnczTVrmw== root@osaka
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCarFCxjxX/8j6dTbh22ck1ZGFk3HG2AslEvHtVSwXaYE6hBOckIEPJDFWYKsVRQ80ksh+AgVQPmWVSiFfA5LUIAjYDyaRYFQjZ00Ke/29nrkfC25sbRwLl9R0EkWUw0AySDmUfkEowM3EZJvkCYhSsjx1uKinoDx5VLir2qE5sesSqTxhOi604m/3Pk8EAKzjU+w3h7Odbh3psSy+yocryzsgftOIygoH0zmXysCDv6HFrH4C6SFHsTbWJ+YKe3GOwbwA0e+5g5jL25WjINhx/PVt7Sd8OBiktKb0VeCQmX6x9wgfpN4iZszZXSNsPJFZLccBevK6rK+3DUAt1D58hQ93xXLnYCdGbMJKkyZOnIEo68U2FGFYxdoM3tnsiYXGrL1/JDD28SaPXaCfU5OG+U0OlMGaWJotPp6GzaYLMG5PcTIJlYfQAr0AHQ111NUa12ii4hhgZEnLX5bnw54w360PsTQE9FvoggTWII5fYob4B5KRolOTx2G7YCiPHFggiKEemKkCMyJX6JmfqN2mHAQeL6qpTgXjuunWmz3bMFUIZthAnbHWn6V03vI07dITNFrW1DNOSSvJ7+jgpj2yddlnrQPiGkcef1nltY+ErFXhdjP9zyNC7KEbpwMA5w9DcUOrTx5snTL5z392+z3eB88O0qtycNldYg2h2QZKSnQ== root@kyoto
+  - name: aloks98
+    gecos: Alok Sahoo
+    groups: wheel
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    passwd: $6$8556df47c6324b80$RqcOZ/wVURwlPLThhY7rVrjV4/1EzsYROgxFTHOY9HJSvFgOtUuTZoLMh69foON7TzONkq35PAger1v47KTvs1
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFzsZwR43Gm8vUkx9s3aJl3mcmCJ8tl5x0S+GazG0iDV aloksahoo@mac
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCSP1eJuWZCZ4lz6kbTjWBzz/75mmFZ1ePODp/BVBQRCqg2945MlsbGSiUeNfEDzXCzJO4b2csMb9pBQUQ06MpLisv0yuZdNzVPX6ytMwp3FD85uDyerbPhjPGR3urSMt31TjvPNM61PPZcvxzRjr/tkk3kjFWNf6uNW38axsoGQFDMcMnEdM9SiGfFeTVews9SC+OU0mEE7/A4Iiq7fX4nqLdFyC7n8MGoLnAyRdwFTspQK2PxhJbOoJKZCAYnfnsTPm+owY5+zCnghESVZn+WU5LRAkkXs4JIUXxDrDwRZhupMPAPC013zJJ4SQx2yKaspRm8fsqmbDQS2Dt9BVAVnNb44++gL7h5LseOvpVV46Ovaz9SaCI7nB04hBeJErM4auP8Hd+SI7cJtJDMtSKnzlEI7NxDm1myqvXDQpnupxCHaxE+4QYFJ7SjWgH1ToFDhHe7VDjEFmNnGWdggdGQzFW3OLkkgPupORvoak5TVca0U4QQqOqVFTom0px1hDx4roYT7lMw1VmDxRk8ajFiaoNWa7EDGnbyIJIGxa7sXPD5qHE79vxhe0LDb5/Bc++6Pv1gZroMLeNzISj35wp6tfc94LGf+eXqdnTr+0psa5/NF4UzuMJwNzRt1ZDkJSifysaIs89ODD5wZa7CCDS14dHBNUwRqSOf2Z/2Ksa0+Q== root@tokyo
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC1Mx+9qMZxwA6OVSeBDMQS70xe+vCzTeOtc0kDfzsOP744GZtKGPwPDlNoGoNc+fOzomPpLtzNCl8hQ1gUWW4nhSwEeFwTyUcz4gl/+/pNcfzdLy1xcXB18oJk+BoFBLBdiEru5DCs66G3B7MlDHKzu0z7QpVt/GgZyA5qn3Re6dUhWGqXfS2hBjG/H4AM0J1TlEYvcOE0E5GRu+UQOZkwAFYBHeji1VJfWIpbv+K2tbMKnpr+sJDzS3GTcRh8CVeGU0rQu4dqXBij/a4uNyIuRac9BsiPJ3bA5LR2q2PQHgpIlQJOFFnEwmwkgZ3++TZb/YvhepigViJVUoPXqPpcpaWYE/nt4ygr0dVfxGMrRqtZB+WCpEOev3SBcqlXgDym5Uhx4aAiYbVppsw9+p+YGNgAA7o+GI78R0CLZ073frsJlBmwjbxnYLaDDGUXAzWBFoW23mzfFXPz78tHD6rLXGdWgUktC3bUJrGQf9zYljQzAITAMSW8dpyiDK2Bq3MRUjz1gCdFZ6pNqrfy+vp4i7eBOkCAsIgETG+RYZv5u5VrqLOqkiJUqU32j/94n2WkNG6AWewR6ZurdUylhz3ToV0TXkJP0mCFD7kEPCxFVHc3DoP13rMzgnPaJl+snDC9BT25swb1xn8W+jQPpSwtbHw8vQcybP3vFFnczTVrmw== root@osaka
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCarFCxjxX/8j6dTbh22ck1ZGFk3HG2AslEvHtVSwXaYE6hBOckIEPJDFWYKsVRQ80ksh+AgVQPmWVSiFfA5LUIAjYDyaRYFQjZ00Ke/29nrkfC25sbRwLl9R0EkWUw0AySDmUfkEowM3EZJvkCYhSsjx1uKinoDx5VLir2qE5sesSqTxhOi604m/3Pk8EAKzjU+w3h7Odbh3psSy+yocryzsgftOIygoH0zmXysCDv6HFrH4C6SFHsTbWJ+YKe3GOwbwA0e+5g5jL25WjINhx/PVt7Sd8OBiktKb0VeCQmX6x9wgfpN4iZszZXSNsPJFZLccBevK6rK+3DUAt1D58hQ93xXLnYCdGbMJKkyZOnIEo68U2FGFYxdoM3tnsiYXGrL1/JDD28SaPXaCfU5OG+U0OlMGaWJotPp6GzaYLMG5PcTIJlYfQAr0AHQ111NUa12ii4hhgZEnLX5bnw54w360PsTQE9FvoggTWII5fYob4B5KRolOTx2G7YCiPHFggiKEemKkCMyJX6JmfqN2mHAQeL6qpTgXjuunWmz3bMFUIZthAnbHWn6V03vI07dITNFrW1DNOSSvJ7+jgpj2yddlnrQPiGkcef1nltY+ErFXhdjP9zyNC7KEbpwMA5w9DcUOrTx5snTL5z392+z3eB88O0qtycNldYg2h2QZKSnQ== root@kyoto
+packages:
+  - epel-release
+  - qemu-guest-agent
+  - figlet
+  - lolcat
+  - fortune-mod
+  - cowsay
+  - yum-utils
+  - dnf-utils
+  - dnf-plugins-core
+  - util-linux-user
+
+groups:
+  - docker
+
+system_info:
+  default_user:
+    groups: [docker]
+
+runcmd:
+  # Enable CodeReady Builder repository and install EPEL
+  - dnf config-manager --set-enabled crb
+  - dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+  
+  # Update system
+  - dnf -y update
+  
+  # Install Docker
+  - dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+  - dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl start docker
+  - systemctl enable docker
+  
+  # Configure Docker permissions
+  - usermod -aG docker root
+  - usermod -aG docker aloks98
+  - chmod 660 /var/run/docker.sock
+  - chown root:docker /var/run/docker.sock
+  
+  # Configure system services
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
+  
+  # Set default shells
+  - chsh -s /bin/bash root
+  - chsh -s /bin/bash aloks98
+  
+  # Configure MOTD and SSH settings
+  - echo "PrintMotd yes" >> /etc/ssh/sshd_config
+  - sed -i 's/^session.*pam_motd.so.*$/#&/' /etc/pam.d/sshd
+  - rm -f /etc/update-motd.d/*
+  - rm -f /etc/motd
+  - touch /etc/motd
+  - chmod 644 /etc/motd
+  
+  # Create MOTD script
+  - |
+    cat > /etc/profile.d/motd.sh << 'EOL'
+    #!/bin/bash
+    # Only show MOTD for interactive shells
+    if [ -n "$PS1" ]; then
+      echo -e "\033[1;34m"
+      if [ -x /usr/bin/figlet ] && [ -x /usr/games/lolcat ]; then
+        /usr/bin/figlet -f standard "e412.in" | /usr/games/lolcat
+      else
+        echo "      _  _   _ ____    _"
+        echo "  ___| || | / |___ \  (_)_ __"
+        echo " / _ \ || |_| | __) | | | '_ \\"
+        echo "|  __/__   _| |/ __/ _| | | | |"
+        echo " \___|  |_| |_|_____(_)_|_| |_|"
+      fi
+      echo -e "\033[1;32m"
+      echo "Welcome to $(hostname)!"
+      echo "OS: $(cat /etc/almalinux-release)"
+      echo "Kernel: $(uname -r)"
+      echo "CPU: $(lscpu | grep "Model name" | cut -f 2 -d ":" | sed "s/^[ \t]*//")"
+      echo "Memory: $(free -h | grep Mem | awk '{print $2}')"
+      echo "IP: $(hostname -I | awk '{print $1}')"
+      echo -e "\033[1;36m"
+      echo "Random Quote of the Day:"
+      if [ -x /usr/bin/fortune ] && [ -x /usr/bin/cowsay ]; then
+        /usr/bin/fortune | /usr/bin/cowsay -f $(ls /usr/share/cowsay/cows/ | shuf -n1)
+      else
+        echo "Today's quote: Life is what happens while you're busy making other plans."
+      fi
+      echo -e "\033[0m"
+    fi
+    EOL
+  
+  # Set permissions and create MOTD source script
+  - chmod +x /etc/profile.d/motd.sh
