@@ -4,26 +4,35 @@ This project automates the creation of Proxmox VE virtual machine templates from
 
 ## How it Works
 
-The application is a single Go binary that performs the following steps when executed on a Proxmox node:
+The application is a Go-based Terminal User Interface (TUI) program that automates the creation of Proxmox VE virtual machine templates. It runs on a Proxmox node and performs the following steps for each image defined in its configuration:
 
-1.  **Reads Configuration**: It parses the `os_list.json` file to get a list of OS images to process. Each entry in this JSON file defines the VM ID, name, download URL, Proxmox tags, and the corresponding cloud-init configuration file.
+1.  **Interactive TUI**: Presents an interactive terminal interface using `tview`, displaying a tree view of the overall progress, the currently executing command, and live streaming output from each step.
 
-2.  **Ensures Paths**: It creates the necessary directories (`/var/lib/vz/template/iso` for images and `/var/lib/vz/snippets` for cloud-init files) on the Proxmox node if they don't already exist.
+2.  **Reads Configuration**: It loads image definitions from `config/os_list.json` and a sequence of shell commands (steps) from `config/steps.json`. These JSON files allow for flexible and dynamic template generation.
 
-3.  **Downloads Image**: For each OS in the list, it checks if the cloud image already exists. If not, it downloads the image from the specified URL and displays a progress bar.
+3.  **Ensures Paths**: Verifies and creates necessary directories on the Proxmox node: `/var/lib/vz/template/iso` (for downloaded images), `/var/lib/vz/snippets` (for cloud-init configuration files), and a local `logs/` directory for error logging.
 
-4.  **VM Creation and Configuration**: It then automates the VM creation process by executing a series of shell commands:
-    *   It destroys any existing VM with the same ID to ensure a clean slate.
-    *   Copies the appropriate cloud-init configuration file (e.g., `ubuntu.yaml`) to the Proxmox snippets directory.
-    *   Resizes the downloaded disk image to a default of 32GB using `qemu-img`.
-    *   Creates a new VM using `qm create` with a predefined set of hardware configurations (CPU, memory, network, etc.).
-    *   Imports the resized disk to the VM's storage (`local-lvm`).
-    *   Sets various VM options using `qm set`, including boot order, cloud-init drive, networking (DHCP), user credentials, and tags.
+4.  **Download and Robust Checksum Verification**: For each OS image:
+    *   It first checks if the image already exists locally.
+    *   If a `checksum_url` is provided in `config/os_list.json`, it downloads the checksum file.
+    *   The application intelligently parses various checksum formats (e.g., standard, Fedora, Rocky Linux, or single-value files) to extract the expected checksum and algorithm (SHA512, SHA256, SHA1, MD5).
+    *   It calculates the checksum of the local image file.
+    *   If the local checksum matches the expected one, the download is skipped. Otherwise, or if checksum verification fails, the image is downloaded from the specified URL.
+    *   Download progress is displayed live in the TUI, with updates rate-limited to maintain UI responsiveness.
 
-5.  **Template Conversion**: Once the VM is fully configured, it converts the VM into a template using `qm template`.
+5.  **Dynamic Command Execution**: The application proceeds to execute a series of shell commands defined in `config/steps.json`. These commands are dynamically templated using placeholders like `{{.ID}}`, `{{.Name}}`, `{{.Tags}}`, `{{.Vendor}}`, and `{{.FilePath}}` (referring to the downloaded image).
+    *   **Pre-existing VM Handling**: The first step typically includes a command to destroy any existing VM with the same ID, ensuring a clean state for template creation.
+    *   **Cloud-Init Setup**: It copies the appropriate cloud-init configuration file (e.g., `ubuntu.yaml` from the `cloudinit/` directory) to the Proxmox snippets directory (`/var/lib/vz/snippets/`).
+    *   **VM Creation and Configuration**: Commands are executed to resize the disk, create a new VM, import the disk, set various VM options (e.g., boot order, cloud-init drive, network, user credentials, tags), and finally convert the VM into a template.
+    *   **Live Output Streaming**: `stdout` and `stderr` from each executed command are streamed live to the TUI's output panel. This streaming is handled concurrently in separate goroutines to prevent deadlocks and maintain UI responsiveness.
+    *   **Step Status**: The status of each step (running, success, failed, skipped) is visually updated in the progress tree.
+    *   **Error Handling**: If any command step fails, subsequent steps for that image are automatically skipped.
 
-6.  **Cleanup**: It removes the temporary disk image file (`base.qcow2`) used during the creation process.
+6.  **Error Logging**: Detailed error messages for any failures during image processing or command execution are logged to individual files in the `logs/` directory (e.g., `logs/ubuntu-22.04.error.log`).
 
+7.  **Cleanup**: After all steps for an image are completed or skipped, the temporary base disk image file (`base.qcow2`) is removed.
+
+8.  **Final Status**: The overall status for each image (success or failure) is indicated in the main progress tree.
 ## Prerequisites
 
 *   A running Proxmox VE node.
@@ -34,7 +43,7 @@ The application is a single Go binary that performs the following steps when exe
 
 ### 1. Configuration
 
-Modify the `os_list.json` file to define the OS images you want to create templates for.
+Modify the `config/os_list.json` file to define the OS images you want to create templates for.
 
 ```json
 [
@@ -51,8 +60,12 @@ Modify the `os_list.json` file to define the OS images you want to create templa
 *   `id`: The unique VM ID for the template.
 *   `name`: The name for the downloaded image file.
 *   `url`: The direct download URL for the qcow2 cloud image.
+*   `checksum_url`: (Optional) The URL to a file containing the checksum for the image. Supports various formats (e.g., standard, Fedora, Rocky Linux, or single-value files).
 *   `tags`: Comma-separated tags to apply to the Proxmox template.
 *   `vendor`: The name of the cloud-init configuration file located in the `cloudinit/` directory.
+
+Modify the `config/steps.json` file to define the sequence of shell commands for creating Proxmox templates.
+
 
 You can also customize the cloud-init behavior by editing the corresponding `.yaml` files in the `cloudinit/` directory.
 
@@ -69,7 +82,9 @@ This will create a `bin` directory with the following structure:
 ```
 bin/
 ├── generate
-├── os_list.json
+└── config/
+    ├── os_list.json
+    └── steps.json
 └── cloudinit/
     ├── almalinux.yaml
     ├── debian.yaml
@@ -81,16 +96,20 @@ bin/
 
 ### 3. Deployment and Execution
 
+**⚠️ WARNING: Data Loss Imminent!**
+
+This application will **permanently destroy any existing Proxmox VMs** that share an ID with an entry in your `config/os_list.json` file. This is an intentional feature to ensure a clean slate for template creation. **Ensure you have backups or are certain you want to delete VMs with conflicting IDs before running this tool.**
+
 1.  Copy the entire `bin` directory to your Proxmox VE node.
     ```sh
     scp -r bin/ user@proxmox-host:/root/
     ```
 
-2.  SSH into your Proxmox node, navigate to the directory, and run the executable. It is recommended to run as root or with `sudo`.
+2.  SSH into your Proxmox node, navigate to the directory, and run the executable. **This application must be run as the `root` user.**
     ```sh
     ssh user@proxmox-host
     cd /root/bin
-    sudo ./generate
+    ./generate
     ```
 
 The application will then start the process of downloading images and creating the templates.
@@ -100,7 +119,9 @@ The application will then start the process of downloading images and creating t
 ```
 .
 ├── generate_templates.go  # Main application source code.
-├── os_list.json           # JSON file defining the OS images to be templated.
+├── config/                # Directory containing configuration files.
+│   ├── os_list.json       # JSON file defining the OS images to be templated.
+│   └── steps.json         # JSON file defining the steps for template generation.
 ├── cloudinit/             # Directory containing cloud-init user-data files.
 ├── Makefile               # Makefile for building the application.
 └── README.md              # This file.
