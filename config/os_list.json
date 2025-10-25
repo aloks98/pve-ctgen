@@ -1,0 +1,67 @@
+[
+  {
+    "id": 8201,
+    "name": "ubuntu2404",
+    "url": "https://cloud-images.ubuntu.com/noble/20251014/noble-server-cloudimg-amd64.img",
+    "checksum_url": "https://cloud-images.ubuntu.com/noble/20251014/SHA256SUMS",
+    "tags": "ubuntu-template,24.04,cloudinit",
+    "vendor": "debian.yaml"
+  },
+  {
+    "id": 8202,
+    "name": "debian13",
+    "url": "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
+    "checksum_url": "https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS",
+    "tags": "debian-template,13,cloudinit",
+    "vendor": "debian.yaml"
+  },
+  {
+    "id": 8203,
+    "name": "debian12",
+    "url": "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
+    "checksum_url": "https://cloud.debian.org/images/cloud/bookworm/latest/SHA512SUMS",
+    "tags": "debian-template,12,cloudinit",
+    "vendor": "debian.yaml"
+  },
+  {
+    "id": 8204,
+    "name": "alma10",
+    "url": "https://repo.almalinux.org/almalinux/10/cloud/x86_64_v2/images/AlmaLinux-10-GenericCloud-10.0-20250528.0.x86_64_v2.qcow2",
+    "checksum_url": "https://repo.almalinux.org/almalinux/10/cloud/x86_64_v2/images/CHECKSUM",
+    "tags": "alma-linux-template,10,cloudinit",
+    "vendor": "almalinux.yaml"
+  },
+  {
+    "id": 8205,
+    "name": "alma9",
+    "url": "https://repo.almalinux.org/almalinux/9.6/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.6-20250522.x86_64.qcow2",
+    "checksum_url": "https://repo.almalinux.org/almalinux/9.6/cloud/x86_64/images/CHECKSUM",
+    "tags": "alma-linux-template,9,cloudinit",
+    "vendor": "almalinux.yaml"
+  },
+  {
+    "id": 8206,
+    "name": "fedora42",
+    "url": "https://ftp.riken.jp/Linux/fedora/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2",
+    "checksum_url": "https://ftp.riken.jp/Linux/fedora/releases/42/Cloud/x86_64/images/Fedora-Cloud-42-1.1-x86_64-CHECKSUM",
+    "tags": "fedora-template,42,cloudinit",
+    "vendor": "fedora.yaml"
+  },
+  {
+    "id": 8207,
+    "name": "rocky10",
+    "url": "https://mirror.ossplanet.net/rockylinux/10/images/x86_64/Rocky-10-GenericCloud-Base-10.0-20250609.1.x86_64.qcow2",
+    "checksum_url": "https://mirror.ossplanet.net/rockylinux/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2.CHECKSUM",
+    "tags": "rocky-template,9,cloudinit",
+    "vendor": "rocky.yaml"
+  },
+  {
+    "id": 8208,
+    "name": "rocky9",
+    "url": "https://mirror.ossplanet.net/rockylinux/9.6/images/x86_64/Rocky-9-GenericCloud-Base-9.6-20250531.0.x86_64.qcow2",
+    "checksum_url": "https://mirror.ossplanet.net/rockylinux/9.6/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2.CHECKSUM",
+    "tags": "rocky-template,9,cloudinit",
+    "vendor": "rocky.yaml"
+  }
+]
+    

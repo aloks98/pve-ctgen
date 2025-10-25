@@ -2,115 +2,473 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	"github.com/schollz/progressbar/v3"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
+// --- Data Structures ---
+
 type Image struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	URL    string `json:"url"`
-	Tags   string `json:"tags"`
-	Vendor string `json:"vendor"`
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	ChecksumURL string `json:"checksum_url"`
+	Tags        string `json:"tags"`
+	Vendor      string `json:"vendor"`
 }
 
-type Vendor struct {
-	RunCmd []string `yaml:"runcmd"`
+type Step struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
 }
+
+type UISTep struct {
+	Node   *tview.TreeNode
+	Name   string
+}
+
+type UIImage struct {
+	Node  *tview.TreeNode
+	Image Image
+	Steps []*UISTep
+}
+
+// --- UI Components ---
+
+var (
+	app           = tview.NewApplication()
+	stepsTree     = tview.NewTreeView()
+	cmdView       = tview.NewTextView()
+	outputView    = tview.NewTextView()
+)
 
 func init() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	output := zerolog.ConsoleWriter{
-		Out:        os.Stderr,
-		TimeFormat: time.RFC3339,
-		NoColor:    false,
-		FormatLevel: func(i interface{}) string {
-			return strings.ToUpper(fmt.Sprintf("%-6s", i))
-		},
-		FormatMessage: func(i interface{}) string {
-			return fmt.Sprintf("| %s", i)
-		},
-		FormatFieldName: func(i interface{}) string {
-			return fmt.Sprintf("%s=", i)
-		},
-		FormatFieldValue: func(i interface{}) string {
-			return fmt.Sprintf("%s", i)
-		},
-	}
-	log.Logger = zerolog.New(output).With().Timestamp().Logger()
+	app.SetMouseCapture(nil)
 }
 
+// --- Main Application Logic ---
+
 func main() {
+	// --- UI Setup ---
+	stepsTree.SetRoot(tview.NewTreeNode("Cloud-Init Template Generation").SetColor(tcell.ColorRed))
+	stepsTree.SetCurrentNode(stepsTree.GetRoot())
+	stepsTree.SetBorder(true).SetTitle("Progress")
+	stepsTree.SetChangedFunc(func(node *tview.TreeNode) {
+		// Output display for selected steps has been removed as per user request.
+	})
+
+	cmdView.SetBorder(true)
+	cmdView.SetTitle("Current Command")
+	cmdView.SetDynamicColors(true)
+
+	outputView.SetBorder(true)
+	outputView.SetTitle("Live Output")
+	outputView.SetDynamicColors(true)
+	outputView.SetScrollable(true)
+
+	rightPanel := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(cmdView, 3, 1, false).
+		AddItem(outputView, 0, 1, true)
+
+	layout := tview.NewFlex().
+		AddItem(stepsTree, 0, 1, true).AddItem(rightPanel, 0, 3, true)
+
+	// --- Generator Goroutine ---
+	go func() {
+		if err := runGenerator(); err != nil {
+			app.Stop()
+		}
+	}()
+
+	// --- Run Application ---
+	if err := app.SetRoot(layout, true).Run(); err != nil {
+		panic(err)
+	}
+}
+
+func runGenerator() error {
 	isoFilePath := "/var/lib/vz/template/iso"
 	snippetsFilePath := "/var/lib/vz/snippets"
-	jsonFilePath := "os_list.json"
+
+	images, err := loadImages("config/os_list.json")
+	if err != nil {
+		return err
+	}
+	steps, err := loadSteps("config/steps.json")
+	if err != nil {
+		return err
+	}
+
+	uiImages := buildUITree(images, steps)
 
 	if err := os.MkdirAll(isoFilePath, 0755); err != nil {
-		log.Fatal().Err(err).Msg("Error creating /var/lib/vz/template/iso folder to store os images")
+		return fmt.Errorf("error creating iso folder: %w", err)
 	}
-
 	if err := os.MkdirAll(snippetsFilePath, 0755); err != nil {
-		log.Fatal().Err(err).Msg("Error creating /var/lib/vz/snippets folder to store cloudinit config")
+		return fmt.Errorf("error creating snippets folder: %w", err)
+	}
+	if err := os.MkdirAll("logs", 0755); err != nil {
+		return fmt.Errorf("error creating logs folder: %w", err)
 	}
 
-	fileContent, err := os.ReadFile(jsonFilePath)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Error reading JSON file")
-	}
-
-	var images []Image
-	if err := json.Unmarshal(fileContent, &images); err != nil {
-		log.Fatal().Err(err).Msg("Error parsing JSON")
-	}
-
-	for _, img := range images {
-		// Update the file path to include the os folder
-		filePath := filepath.Join(isoFilePath, img.Name)
-
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			log.Info().Str("file", img.Name).Msg("Starting download")
-
-			if err := downloadFile(filePath, img.URL); err != nil {
-				log.Error().Err(err).Str("file", img.Name).Msg("Download failed")
-				cleanupBaseFile()
-				continue
+	var previousImageNode *tview.TreeNode
+	for _, uiImage := range uiImages {
+		app.QueueUpdateDraw(func() {
+			if previousImageNode != nil {
+				previousImageNode.Collapse()
 			}
+			uiImage.Node.SetColor(tcell.ColorYellow)
+			stepsTree.SetCurrentNode(uiImage.Node)
+			uiImage.Node.Expand()
+			previousImageNode = uiImage.Node
+		})
 
-			log.Info().Str("file", img.Name).Msg("Download completed")
+		var hasFailed bool
+		var filePath string
+
+		// --- Download & Verify Step ---
+		downloadStep := uiImage.Steps[0]
+		filePath, err = handleDownloadAndChecksum(downloadStep, uiImage.Image, isoFilePath)
+		if err != nil {
+			logError(uiImage.Image.Name, err)
+			updateNodeStatus(downloadStep.Node, "failed")
+			hasFailed = true
 		} else {
-			log.Info().Str("file", img.Name).Msg("File already exists")
+			updateNodeStatus(downloadStep.Node, "success")
+			time.Sleep(1 * time.Second)
 		}
 
-		// Create a copy of the downloaded file with the name base.qcow2
+		// --- Copy Image Step ---
 		baseFilePath := "base.qcow2"
-		if err := copyFile(filePath, baseFilePath); err != nil {
-			log.Error().Err(err).Str("file", img.Name).Msg("Copying failed")
-			cleanupBaseFile()
-			continue
+		if !hasFailed {
+			copyStep := uiImage.Steps[1]
+			updateNodeStatus(copyStep.Node, "running")
+			app.QueueUpdateDraw(func() {
+				cmdView.Clear()
+				outputView.Clear()
+				cmdView.SetText(fmt.Sprintf("Step: %s\n[yellow]Command: cp %s %s", copyStep.Name, filePath, baseFilePath))
+			})
+			appendOutput(fmt.Sprintf("Copying %s to %s...\n", filePath, baseFilePath))
+			if err := copyFile(filePath, baseFilePath); err != nil {
+				logError(uiImage.Image.Name, err)
+				updateNodeStatus(copyStep.Node, "failed")
+				hasFailed = true
+			} else {
+				appendOutput("Copy complete.\n")
+				updateNodeStatus(copyStep.Node, "success")
+				time.Sleep(1 * time.Second)
+			}
 		}
 
-		// Execute the commands
-		if err := executeCommands(baseFilePath, img); err != nil {
-			log.Error().Err(err).Str("file", img.Name).Msg("Command execution failed")
-			cleanupBaseFile()
-			continue
+		// --- Dynamic Execution Steps ---
+		if !hasFailed {
+			executionSteps := uiImage.Steps[2:]
+			if err := executeCommands(executionSteps, baseFilePath, uiImage.Image, steps); err != nil {
+				logError(uiImage.Image.Name, err)
+				hasFailed = true
+			}
+		}
+
+		// --- Final Status ---
+		if hasFailed {
+			markRemainingStepsAsSkipped(uiImage.Steps)
+			uiImage.Node.SetText(fmt.Sprintf("❌ %s", uiImage.Image.Name))
+		} else {
+			uiImage.Node.SetText(fmt.Sprintf("✅ %s", uiImage.Image.Name))
+		}
+		uiImage.Node.SetColor(tcell.ColorDefault)
+	}
+
+	return nil
+}
+
+// --- UI & State Management ---
+
+func buildUITree(images []Image, steps []Step) []*UIImage {
+	rootNode := stepsTree.GetRoot()
+	uiImages := make([]*UIImage, len(images))
+
+	staticSteps := []string{"Download/Verify", "Copy Image"}
+
+	for i, img := range images {
+		imgNode := tview.NewTreeNode(fmt.Sprintf("🖼️  %s", img.Name)).SetColor(tcell.ColorGrey)
+		rootNode.AddChild(imgNode)
+
+		uiImage := &UIImage{Node: imgNode, Image: img}
+
+		for _, stepName := range staticSteps {
+			stepNode := tview.NewTreeNode(stepName)
+			uiStep := &UISTep{Node: stepNode, Name: stepName}
+			stepNode.SetReference(uiStep)
+			updateNodeStatus(stepNode, "pending")
+			imgNode.AddChild(stepNode)
+			uiImage.Steps = append(uiImage.Steps, uiStep)
+		}
+
+		for _, step := range steps {
+			stepNode := tview.NewTreeNode(step.Name)
+			uiStep := &UISTep{Node: stepNode, Name: step.Name}
+			stepNode.SetReference(uiStep)
+			updateNodeStatus(stepNode, "pending")
+			imgNode.AddChild(stepNode)
+			uiImage.Steps = append(uiImage.Steps, uiStep)
+		}
+		uiImages[i] = uiImage
+	}
+	app.QueueUpdateDraw(func() {})
+	return uiImages
+}
+
+func updateNodeStatus(node *tview.TreeNode, status string) {
+	var icon string
+	var color tcell.Color
+	switch status {
+	case "running":
+		icon = "⚙️"
+		color = tcell.ColorYellow
+	case "success":
+		icon = "✅"
+		color = tcell.ColorGreen
+	case "failed":
+		icon = "❌"
+		color = tcell.ColorRed
+	case "skipped":
+		icon = "➖"
+		color = tcell.ColorDarkGrey
+	default: // pending
+		icon = "❔"
+		color = tcell.ColorGrey
+	}
+	text := strings.TrimLeft(node.GetText(), "✅⚙️❌➖❔ ")
+	app.QueueUpdateDraw(func() {
+		node.SetText(fmt.Sprintf("%s %s", icon, text)).SetColor(color)
+	})
+}
+
+func markRemainingStepsAsSkipped(steps []*UISTep) {
+	for _, step := range steps {
+		text := step.Node.GetText()
+		if strings.HasPrefix(text, "❔") {
+			updateNodeStatus(step.Node, "skipped")
 		}
 	}
+}
+
+func appendOutput(text string) {
+	app.QueueUpdateDraw(func() {
+		outputView.Write([]byte(text))
+	})
+}
+
+func logError(imageName string, err error) {
+	logFilePath := filepath.Join("logs", fmt.Sprintf("%s.error.log", imageName))
+	f, _ := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		defer f.Close()
+		f.WriteString(fmt.Sprintf("[%s] %v\n", time.Now().Format(time.RFC3339), err))
+	}
+}
+
+// --- Core Logic Functions ---
+
+func loadImages(path string) ([]Image, error) {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("error reading images file: %w", err)
+	}
+	var images []Image
+	if err := json.Unmarshal(file, &images); err != nil {
+		return nil, fmt.Errorf("error parsing images JSON: %w", err)
+	}
+	return images, nil
+}
+
+func loadSteps(path string) ([]Step, error) {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("error reading steps file: %w", err)
+	}
+	var steps []Step
+	if err := json.Unmarshal(file, &steps); err != nil {
+		return nil, fmt.Errorf("error parsing steps JSON: %w", err)
+	}
+	return steps, nil
+}
+
+func handleDownloadAndChecksum(step *UISTep, img Image, isoFilePath string) (string, error) {
+	updateNodeStatus(step.Node, "running")
+	app.QueueUpdateDraw(func() {
+		cmdView.Clear()
+		outputView.Clear()
+		cmdView.SetText(fmt.Sprintf("Step: %s\n[yellow]Verifying local file and checksum...", step.Name))
+	})
+
+	filePath := filepath.Join(isoFilePath, img.Name)
+
+	if _, err := os.Stat(filePath); err == nil {
+		if img.ChecksumURL == "" {
+			appendOutput("☑️ File exists, no checksum URL provided. Skipping check and download.\n")
+			return filePath, nil
+		}
+
+		appendOutput("🔎 Verifying checksum...\n")
+		filenameFromURL := filepath.Base(img.URL)
+		expectedChecksum, algo, err := getExpectedChecksum(img.ChecksumURL, filenameFromURL)
+		if err != nil {
+			appendOutput(fmt.Sprintf("⚠️ Could not get checksum: %v. Re-downloading...\n", err))
+			os.Remove(filePath)
+		} else {
+			localChecksum, err := calculateFileChecksum(filePath, algo)
+			if err != nil {
+				appendOutput(fmt.Sprintf("⚠️ Could not calculate local checksum: %v. Re-downloading...\n", err))
+				os.Remove(filePath)
+			} else if localChecksum == expectedChecksum {
+				appendOutput(fmt.Sprintf("✅ Checksum match (%s). Skipping download.\n", algo))
+				return filePath, nil
+			} else {
+				appendOutput(fmt.Sprintf("❌ Checksum mismatch (%s). Re-downloading...\n", algo))
+				os.Remove(filePath)
+			}
+		}
+	}
+
+	if err := downloadFile(filePath, img.URL); err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+
+	return filePath, nil
+}
+
+func getExpectedChecksum(url string, filename string) (string, string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", err
+	}
+
+	var checksum string
+	bodyString := string(body)
+	lines := strings.Split(bodyString, "\n")
+
+	// --- Strategy 1: Standard format (Debian, Ubuntu, AlmaLinux) ---
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			checksumFilename := strings.TrimPrefix(fields[1], "*")
+			if checksumFilename == filename {
+				checksum = fields[0]
+				break
+			}
+		}
+	}
+
+	// --- Strategy 2: Fedora format ---
+	if checksum == "" {
+		for i, line := range lines {
+			if strings.HasPrefix(line, "## ") && strings.TrimPrefix(line, "## ") == filename {
+				if i+1 < len(lines) {
+					nextLine := lines[i+1]
+					if strings.HasPrefix(nextLine, "SHA256: ") {
+						checksum = strings.TrimSpace(strings.TrimPrefix(nextLine, "SHA256: "))
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// --- Strategy 3: Rocky Linux format ---
+	if checksum == "" {
+		for _, line := range lines {
+			if strings.Contains(line, "("+filename+")") {
+				parts := strings.Split(line, "= ")
+				if len(parts) == 2 {
+					checksum = strings.TrimSpace(parts[1])
+					break
+				}
+			}
+		}
+	}
+
+	// --- Strategy 4: Single value in file ---
+	if checksum == "" && len(strings.Fields(bodyString)) == 1 {
+		checksum = strings.Fields(bodyString)[0]
+	}
+
+	if checksum == "" {
+		return "", "", fmt.Errorf("for %s not found in checksum file", filename)
+	}
+
+	var algo string
+	switch len(checksum) {
+	case 128:
+		algo = "sha512"
+	case 64:
+		algo = "sha256"
+	case 40:
+		algo = "sha1"
+	case 32:
+		algo = "md5"
+	default:
+		return "", "", fmt.Errorf("unsupported checksum length: %d", len(checksum))
+	}
+
+	return checksum, algo, nil
+}
+
+func calculateFileChecksum(filePath string, algorithm string) (string, error) {
+	var h hash.Hash
+	switch strings.ToLower(algorithm) {
+	case "sha512":
+		h = sha512.New()
+	case "sha256":
+		h = sha256.New()
+	case "sha1":
+		h = sha1.New()
+	case "md5":
+		h = md5.New()
+	default:
+		return "", fmt.Errorf("unsupported algorithm: %s", algorithm)
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(h, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func downloadFile(filePath string, url string) error {
+	app.QueueUpdateDraw(func() {
+		cmdView.SetText(fmt.Sprintf("Downloading %s", url))
+	})
+
 	file, err := os.Create(filePath)
 	if err != nil {
 		return fmt.Errorf("create file failed: %w", err)
@@ -127,22 +485,45 @@ func downloadFile(filePath string, url string) error {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	bar := progressbar.NewOptions64(
-		resp.ContentLength,
-		progressbar.OptionSetDescription("Downloading"),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWidth(20),
-		progressbar.OptionThrottle(100*time.Millisecond),
-		progressbar.OptionShowCount(),
-		progressbar.OptionOnCompletion(func() { fmt.Println() }),
-		progressbar.OptionSpinnerType(14),
-	)
+	totalSize := float64(resp.ContentLength)
+	var downloaded float64
+	var written int64
 
-	if _, err := io.Copy(io.MultiWriter(file, bar), resp.Body); err != nil {
-		return fmt.Errorf("copy failed: %w", err)
+	writer := io.MultiWriter(file, &progressWriter{
+		total:      totalSize,
+		downloaded: &downloaded,
+	})
+
+	written, err = io.Copy(writer, resp.Body)
+	if err != nil {
+		return fmt.Errorf("response body read failed: %w", err)
+	}
+	if totalSize != 0 && float64(written) != totalSize {
+		return fmt.Errorf("download incomplete: wrote %d bytes, expected %f", written, totalSize)
 	}
 
 	return nil
+}
+
+type progressWriter struct {
+	total      float64
+	downloaded *float64
+	lastUpdate time.Time
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	*pw.downloaded += float64(n)
+
+	if time.Since(pw.lastUpdate) > 100*time.Millisecond || *pw.downloaded == pw.total {
+		pw.lastUpdate = time.Now()
+		percentage := (*pw.downloaded / pw.total) * 100
+		app.QueueUpdateDraw(func() {
+			outputView.Clear()
+			outputView.SetText(fmt.Sprintf("Downloading: %.2f%%", percentage))
+		})
+	}
+	return n, nil
 }
 
 func copyFile(src, dst string) error {
@@ -158,175 +539,115 @@ func copyFile(src, dst string) error {
 	}
 	defer destFile.Close()
 
-	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return fmt.Errorf("copy file content failed: %w", err)
-	}
-
-	return nil
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }
 
-func executeCommands(filePath string, img Image) error {
-	// Check and destroy existing VM
-	if err := checkAndDestroyVM(img.ID); err != nil {
-		return fmt.Errorf("VM cleanup failed: %w", err)
-	}
-
+func executeCommands(steps []*UISTep, filePath string, img Image, stepData []Step) error {
 	cloudinitFilePath := filepath.Join("/var/lib/vz/snippets/", img.Vendor)
 	configFilePath := filepath.Join("cloudinit", img.Vendor)
 	if err := copyFile(configFilePath, cloudinitFilePath); err != nil {
-		log.Error().Err(err).Str("file", img.Name).Msg("Copying cloudinit config failed")
-		cleanupBaseFile()
+		return fmt.Errorf("copying cloudinit config failed: %w", err)
 	}
 
-	commands := []struct {
-		name string
-		cmd  *exec.Cmd
-	}{
-		{
-			"Resize disk",
-			exec.Command("qemu-img", "resize", "-f", "qcow2", filePath, "32G"),
-		},
-		{
-			"Create VM",
-			exec.Command("qm", "create", fmt.Sprintf("%d", img.ID),
-				"--name", fmt.Sprintf("%s-%d-cloudinit", img.Name, img.ID),
-				"--ostype", "l26",
-				"--memory", "1024",
-				"--agent", "1",
-				"--bios", "ovmf",
-				"--machine", "q35",
-				"--efidisk0", "local-lvm:0,pre-enrolled-keys=0",
-				"--cpu", "host",
-				"--socket", "1",
-				"--cores", "2",
-				"--vga", "serial0",
-				"--serial0", "socket",
-				"--net0", "virtio,bridge=vmbr0"),
-		},
-		{
-			"Import disk",
-			exec.Command("qm", "importdisk", fmt.Sprintf("%d", img.ID), filePath, "local-lvm"),
-		},
-		{
-			"Set disk options",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID),
-				"--scsihw", "virtio-scsi-pci",
-				"--virtio0", fmt.Sprintf("local-lvm:vm-%d-disk-1,discard=on", img.ID)),
-		},
-		{
-			"Set boot options",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--boot", "order=virtio0"),
-		},
-		{
-			"Set cloud-init",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--scsi1", "local-lvm:cloudinit"),
-		},
-		{
-			"Set IP configuration",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--ipconfig0", "ip=dhcp"),
-		},
-		{
-			"Set tags",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--tags", img.Tags),
-		},
-		{
-			"Set credentials",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--ciuser", "root", "--cipassword", "alok@admin1"),
-		},
-		{
-			"Set cloud-init user data",
-			exec.Command("qm", "set", fmt.Sprintf("%d", img.ID), "--cicustom", fmt.Sprintf("user=local:snippets/%s", img.Vendor)),
-		},
-	}
+	replacer := strings.NewReplacer(
+		"{{.ID}}", fmt.Sprintf("%d", img.ID),
+		"{{.Name}}", img.Name,
+		"{{.Tags}}", img.Tags,
+		"{{.Vendor}}", img.Vendor,
+		"{{.FilePath}}", filePath,
+	)
 
-	// Execute all commands
-	for _, c := range commands {
-		if err := runCommandWithStreaming(c.cmd, c.name); err != nil {
-			return err
+	var hasFailed bool
+	for i, step := range stepData {
+		uiStep := steps[i]
+		if hasFailed {
+			updateNodeStatus(uiStep.Node, "skipped")
+			continue
+		}
+
+		updateNodeStatus(uiStep.Node, "running")
+		commandString := replacer.Replace(step.Command)
+		cmd := exec.Command("bash", "-c", commandString)
+
+		if err := runCommandWithStreaming(cmd, step.Name); err != nil {
+			updateNodeStatus(uiStep.Node, "failed")
+			hasFailed = true
+			logError(img.Name, fmt.Errorf("step '%s' failed: %w. Command: %s", step.Name, err, commandString))
+		} else {
+			updateNodeStatus(uiStep.Node, "success")
+			time.Sleep(1 * time.Second)
 		}
 	}
 
-	templateCmd := exec.Command("qm", "template", fmt.Sprintf("%d", img.ID))
-	if err := runCommandWithStreaming(templateCmd, "Convert to template"); err != nil {
-		log.Warn().Err(err).Msg("Failed to convert to template")
-	}
-
-	// Cleanup
 	if err := os.Remove(filePath); err != nil {
-		return fmt.Errorf("failed to remove base.qcow2 file: %w", err)
-	}
-	log.Info().Str("file", filePath).Msg("Cleanup complete")
-
-	return nil
-}
-
-func checkAndDestroyVM(vmid int) error {
-	// Check if VM exists
-	statusCmd := exec.Command("qm", "status", fmt.Sprintf("%d", vmid))
-	if err := statusCmd.Run(); err != nil {
-		// VM doesn't exist
-		return nil
+		// Log this but don't fail the whole process for it
+		logError(img.Name, fmt.Errorf("failed to remove base.qcow2 file: %w", err))
 	}
 
-	log.Info().Int("vmid", vmid).Msg("Existing VM found, destroying...")
-	destroyCmd := exec.Command("qm", "destroy", fmt.Sprintf("%d", vmid))
-	if err := runCommandWithStreaming(destroyCmd, "Destroy VM"); err != nil {
-		return fmt.Errorf("failed to destroy VM: %w", err)
+	if hasFailed {
+		return fmt.Errorf("one or more steps failed for %s", img.Name)
 	}
 	return nil
 }
 
 func runCommandWithStreaming(cmd *exec.Cmd, name string) error {
-	log.Info().
-		Str("command", cmd.String()).
-		Msg(fmt.Sprintf("🚀 Executing: %s", name))
+	app.QueueUpdateDraw(func() {
+		cmdView.Clear()
+		outputView.Clear()
+		var displayCmd string
+		if len(cmd.Args) > 2 && cmd.Args[0] == "bash" && cmd.Args[1] == "-c" {
+			displayCmd = cmd.Args[2]
+		} else {
+			displayCmd = strings.Join(cmd.Args, " ")
+		}
+		cmdView.SetText(fmt.Sprintf("Step: %s\n[yellow]Command: %s", name, displayCmd))
+	})
 
-	stdout, err := cmd.StdoutPipe()
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
+	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	done := make(chan struct{})
 
-	streamOutput := func(pipe io.Reader, prefix string) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(pipe)
+	go func() {
+		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
-			output := scanner.Text()
-			if prefix == "stderr" {
-				log.Error().Msg(output)
-			} else {
-				log.Info().Msg(output)
-			}
+			appendOutput(scanner.Text() + "\n")
 		}
-	}
+		if scanner.Err() != nil {
+			logError("command_stdout_stream", fmt.Errorf("error reading stdout: %w", scanner.Err()))
+		}
+		done <- struct{}{}
+	}()
 
-	go streamOutput(stdout, "stdout")
-	go streamOutput(stderr, "stderr")
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			appendOutput(scanner.Text() + "\n")
+		}
+		if scanner.Err() != nil {
+			logError("command_stderr_stream", fmt.Errorf("error reading stderr: %w", scanner.Err()))
+		}
+		done <- struct{}{}
+	}()
 
-	wg.Wait()
+	<-done
+	<-done
 
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
 
-	log.Info().Msg(fmt.Sprintf("✅ Completed: %s", name))
 	return nil
 }
 
-func cleanupBaseFile() {
-	baseFilePath := "base.qcow2"
-	if _, err := os.Stat(baseFilePath); err == nil {
-		os.Remove(baseFilePath)
-		log.Info().Str("file", baseFilePath).Msg("Cleanup: base.qcow2 deleted")
-	}
-}

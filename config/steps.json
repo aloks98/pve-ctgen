@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Destroy VM if exists",
+    "command": "(qm status {{.ID}} > /dev/null 2>&1 && qm destroy {{.ID}}) || true"
+  },
+  {
+    "name": "Resize disk",
+    "command": "qemu-img resize -f qcow2 {{.FilePath}} 32G"
+  },
+  {
+    "name": "Create VM",
+    "command": "qm create {{.ID}} --name {{.Name}}-{{.ID}}-cloudinit --ostype l26 --memory 1024 --agent 1 --bios ovmf --machine q35 --efidisk0 local-lvm:0,pre-enrolled-keys=0 --cpu host --socket 1 --cores 2 --vga serial0 --serial0 socket --net0 virtio,bridge=vmbr0"
+  },
+  {
+    "name": "Import disk",
+    "command": "qm importdisk {{.ID}} {{.FilePath}} local-lvm"
+  },
+  {
+    "name": "Set disk options",
+    "command": "qm set {{.ID}} --scsihw virtio-scsi-pci --virtio0 local-lvm:vm-{{.ID}}-disk-1,discard=on"
+  },
+  {
+    "name": "Set boot options",
+    "command": "qm set {{.ID}} --boot order=virtio0"
+  },
+  {
+    "name": "Set cloud-init",
+    "command": "qm set {{.ID}} --scsi1 local-lvm:cloudinit"
+  },
+  {
+    "name": "Set IP configuration",
+    "command": "qm set {{.ID}} --ipconfig0 ip=dhcp"
+  },
+  {
+    "name": "Set tags",
+    "command": "qm set {{.ID}} --tags {{.Tags}}"
+  },
+  {
+    "name": "Set credentials",
+    "command": "qm set {{.ID}} --ciuser root --cipassword alok@admin1"
+  },
+  {
+    "name": "Set cloud-init user data",
+    "command": "qm set {{.ID}} --cicustom user=local:snippets/{{.Vendor}}"
+  },
+  {
+    "name": "Convert to template",
+    "command": "qm template {{.ID}}"
+  }
+]
