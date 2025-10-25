@@ -5,3 +5,6 @@ build:
 	cp -r config bin/
 	cp config/os_list.json bin/config/
 	cp config/steps.json bin/config/
+
+lint:
+	$(shell go env GOPATH)/bin/golint ./...

@@ -25,6 +25,7 @@ import (
 
 // --- Progress Writer ---
 
+// ProgressWriter is an io.Writer that reports download progress.
 type ProgressWriter struct {
 	Total      float64
 	Downloaded float64
@@ -33,6 +34,7 @@ type ProgressWriter struct {
 	OutputView *tview.TextView
 }
 
+// Write implements the io.Writer interface for ProgressWriter.
 func (pw *ProgressWriter) Write(p []byte) (int, error) {
 	n := len(p)
 	pw.Downloaded += float64(n)
@@ -50,6 +52,7 @@ func (pw *ProgressWriter) Write(p []byte) (int, error) {
 
 // --- File and Network Operations ---
 
+// LoadImages loads image configurations from a JSON file.
 func LoadImages(path string) ([]types.Image, error) {
 	file, err := os.ReadFile(path)
 	if err != nil {
@@ -62,6 +65,7 @@ func LoadImages(path string) ([]types.Image, error) {
 	return images, nil
 }
 
+// LoadSteps loads step configurations from a JSON file.
 func LoadSteps(path string) ([]types.Step, error) {
 	file, err := os.ReadFile(path)
 	if err != nil {
@@ -74,6 +78,7 @@ func LoadSteps(path string) ([]types.Step, error) {
 	return steps, nil
 }
 
+// HandleDownloadAndChecksum handles the download and checksum verification of an image.
 func HandleDownloadAndChecksum(app *tview.Application, stepView, commandView, outputView *tview.TextView, step *types.UISTep, img types.Image, isoFilePath string, updateNodeStatus func(*tview.TreeNode, string), appendOutput func(string)) (string, error) {
 	updateNodeStatus(step.Node, "running")
 	app.QueueUpdateDraw(func() {
@@ -120,6 +125,7 @@ func HandleDownloadAndChecksum(app *tview.Application, stepView, commandView, ou
 	return filePath, nil
 }
 
+// GetExpectedChecksum fetches the expected checksum for a given image from its checksum URL.
 func GetExpectedChecksum(url string, filename string) (string, string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -198,6 +204,7 @@ func GetExpectedChecksum(url string, filename string) (string, string, error) {
 	return checksum, algo, nil
 }
 
+// CalculateFileChecksum calculates the checksum of a file using the specified algorithm.
 func CalculateFileChecksum(filePath string, algorithm string) (string, error) {
 	var h hash.Hash
 	switch strings.ToLower(algorithm) {
@@ -225,6 +232,7 @@ func CalculateFileChecksum(filePath string, algorithm string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// DownloadFile downloads a file from the given URL to the specified path.
 func DownloadFile(app *tview.Application, stepView, commandView, outputView *tview.TextView, filePath string, url string) error {
 	app.QueueUpdateDraw(func() {
 		stepView.SetText(fmt.Sprintf("Downloading %s", url))
@@ -265,6 +273,7 @@ func DownloadFile(app *tview.Application, stepView, commandView, outputView *tvi
 	return nil
 }
 
+// CopyFile copies a file from source to destination.
 func CopyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
 	if err != nil {
@@ -282,6 +291,7 @@ func CopyFile(src, dst string) error {
 	return err
 }
 
+// ExecuteCommands executes a series of commands for a given image.
 func ExecuteCommands(app *tview.Application, stepView, commandView, outputView *tview.TextView, steps []*types.UISTep, filePath string, img types.Image, stepData []types.Step, updateNodeStatus func(*tview.TreeNode, string), appendOutput func(string), logError func(string, error)) error {
 	cloudinitFilePath := filepath.Join("/var/lib/vz/snippets/", img.Vendor)
 	configFilePath := filepath.Join("cloudinit", img.Vendor)
@@ -329,6 +339,7 @@ func ExecuteCommands(app *tview.Application, stepView, commandView, outputView *
 	return nil
 }
 
+// RunCommandWithStreaming executes a shell command and streams its output to the UI.
 func RunCommandWithStreaming(app *tview.Application, stepView, commandView, outputView *tview.TextView, cmd *exec.Cmd, name string, appendOutput func(string), logError func(string, error)) error {
 	var displayCmd string
 	if len(cmd.Args) > 2 && cmd.Args[0] == "bash" && cmd.Args[1] == "-c" {
@@ -393,6 +404,7 @@ func RunCommandWithStreaming(app *tview.Application, stepView, commandView, outp
 	return nil
 }
 
+// LogError logs an error to a file specific to the image name.
 func LogError(imageName string, err error) {
 	logFilePath := filepath.Join("logs", fmt.Sprintf("%s.error.log", imageName))
 	f, _ := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
