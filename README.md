@@ -94,7 +94,7 @@ bin/
     └── ubuntu.yaml
 ```
 
-### 3. Deployment and Execution
+### 3. Execution
 
 **⚠️ WARNING: Data Loss Imminent!**
 
@@ -102,12 +102,12 @@ This application will **permanently destroy any existing Proxmox VMs** that shar
 
 1.  Copy the entire `bin` directory to your Proxmox VE node.
     ```sh
-    scp -r bin/ user@proxmox-host:/root/
+    scp -r bin/ root@proxmox-host:/root/
     ```
 
 2.  SSH into your Proxmox node, navigate to the directory, and run the executable. **This application must be run as the `root` user.**
     ```sh
-    ssh user@proxmox-host
+    ssh root@proxmox-host
     cd /root/bin
     ./generate
     ```
