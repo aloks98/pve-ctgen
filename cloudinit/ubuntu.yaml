@@ -1,8 +1,18 @@
 #cloud-config
 hostname: ubuntu
 package_upgrade: true
-locale: en_US
+locale: en_US.UTF-8
 timezone: Asia/Kolkata
+
+# Configure apt proxy BEFORE package installation
+apt:
+  proxy: "http://192.168.150.1:3142"
+  https_proxy: "http://192.168.150.1:3142"
+
+# Ensure locale is properly configured
+locale_config:
+  locale: en_US.UTF-8
+  locale_configfile: /etc/default/locale
 users:
   - name: root
     lock_passwd: false
@@ -25,16 +35,12 @@ users:
       - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCarFCxjxX/8j6dTbh22ck1ZGFk3HG2AslEvHtVSwXaYE6hBOckIEPJDFWYKsVRQ80ksh+AgVQPmWVSiFfA5LUIAjYDyaRYFQjZ00Ke/29nrkfC25sbRwLl9R0EkWUw0AySDmUfkEowM3EZJvkCYhSsjx1uKinoDx5VLir2qE5sesSqTxhOi604m/3Pk8EAKzjU+w3h7Odbh3psSy+yocryzsgftOIygoH0zmXysCDv6HFrH4C6SFHsTbWJ+YKe3GOwbwA0e+5g5jL25WjINhx/PVt7Sd8OBiktKb0VeCQmX6x9wgfpN4iZszZXSNsPJFZLccBevK6rK+3DUAt1D58hQ93xXLnYCdGbMJKkyZOnIEo68U2FGFYxdoM3tnsiYXGrL1/JDD28SaPXaCfU5OG+U0OlMGaWJotPp6GzaYLMG5PcTIJlYfQAr0AHQ111NUa12ii4hhgZEnLX5bnw54w360PsTQE9FvoggTWII5fYob4B5KRolOTx2G7YCiPHFggiKEemKkCMyJX6JmfqN2mHAQeL6qpTgXjuunWmz3bMFUIZthAnbHWn6V03vI07dITNFrW1DNOSSvJ7+jgpj2yddlnrQPiGkcef1nltY+ErFXhdjP9zyNC7KEbpwMA5w9DcUOrTx5snTL5z392+z3eB88O0qtycNldYg2h2QZKSnQ== root@kyoto
 packages:
   - qemu-guest-agent
-  - apt-transport-https
   - ca-certificates
   - curl
   - gnupg
   - lsb-release
-  - figlet
-  - lolcat
-  - fortune-mod
-  - cowsay
   - software-properties-common
+  - locales
 
 groups:
   - docker
@@ -44,28 +50,32 @@ system_info:
     groups: [docker]
 
 runcmd:
-  # Configure apt proxy
-  - echo 'Acquire::http::Proxy "http://192.168.150.1:3142";' > /etc/apt/apt.conf.d/01proxy
-  - echo 'Acquire::https::Proxy "http://192.168.150.1:3142";' >> /etc/apt/apt.conf.d/01proxy
-  
-  # Update system and install Docker
+  # Configure locale to prevent perl warnings
+  - sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+  - locale-gen en_US.UTF-8
+  - update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+  # Install optional MOTD packages (non-critical, failures won't stop execution)
+  - apt-get install -y figlet lolcat fortune-mod cowsay || true
+
+  # Update system and install Docker using modern method
   - apt-get update
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
   - apt-get update
-  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - systemctl start docker
   - systemctl enable docker
   
   # Configure Docker permissions
   - usermod -aG docker root
   - usermod -aG docker aloks98
-  - chmod 660 /var/run/docker.sock
-  - chown root:docker /var/run/docker.sock
-  
+  - sleep 2 && [ -S /var/run/docker.sock ] && chmod 660 /var/run/docker.sock && chown root:docker /var/run/docker.sock || true
+
   # Configure system services
-  - systemctl enable qemu-guest-agent
-  - systemctl start qemu-guest-agent
+  - systemctl start qemu-guest-agent || true
   
   # Set default shells
   - chsh -s /bin/bash root

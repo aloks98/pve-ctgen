@@ -1,7 +1,7 @@
 #cloud-config
 hostname: almalinux
 package_upgrade: true
-locale: en_US
+locale: en_US.UTF-8
 timezone: Asia/Kolkata
 
 users:
@@ -27,14 +27,11 @@ users:
 packages:
   - epel-release
   - qemu-guest-agent
-  - figlet
-  - lolcat
-  - fortune-mod
-  - cowsay
   - yum-utils
   - dnf-utils
   - dnf-plugins-core
   - util-linux-user
+  - glibc-langpack-en
 
 groups:
   - docker
@@ -44,28 +41,31 @@ system_info:
     groups: [docker]
 
 runcmd:
-  # Enable CodeReady Builder repository and install EPEL
-  - dnf config-manager --set-enabled crb
-  - dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
-  
+  # Configure locale to prevent perl warnings
+  - localectl set-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+  # Enable CodeReady Builder/CRB repository (try both names for compatibility)
+  - dnf config-manager --set-enabled crb || dnf config-manager --set-enabled powertools || true
+
+  # Install optional MOTD packages (non-critical, failures won't stop execution)
+  - dnf install -y figlet lolcat fortune-mod cowsay || true
+
   # Update system
   - dnf -y update
-  
+
   # Install Docker
   - dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-  - dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - systemctl start docker
   - systemctl enable docker
-  
+
   # Configure Docker permissions
   - usermod -aG docker root
   - usermod -aG docker aloks98
-  - chmod 660 /var/run/docker.sock
-  - chown root:docker /var/run/docker.sock
-  
+  - sleep 2 && [ -S /var/run/docker.sock ] && chmod 660 /var/run/docker.sock && chown root:docker /var/run/docker.sock || true
+
   # Configure system services
-  - systemctl enable qemu-guest-agent
-  - systemctl start qemu-guest-agent
+  - systemctl start qemu-guest-agent || true
   
   # Set default shells
   - chsh -s /bin/bash root
