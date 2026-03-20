@@ -1,474 +1,216 @@
-# Proxmox VE Cloud-Init Template Generator (pve-ctgen)
+# pvectgen — Proxmox VE Cloud-Init Template Generator
 
-A Go-based Terminal User Interface (TUI) application that automates the creation of Proxmox VE virtual machine templates from official cloud images. It downloads images, verifies checksums, configures VMs using cloud-init, and converts them to reusable templates.
+A manager-minion system for creating Proxmox VE virtual machine templates from cloud images. Manage templates, cloud-init configs, and build steps from your workstation; execute builds on any number of Proxmox nodes.
 
-## Table of Contents
+## How it works
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [Supported Operating Systems](#supported-operating-systems)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Configuration](#configuration)
-  - [OS List Configuration](#os-list-configuration)
-  - [Steps Configuration](#steps-configuration)
-  - [Cloud-Init Configuration](#cloud-init-configuration)
-- [Usage](#usage)
-- [How It Works](#how-it-works)
-- [Project Structure](#project-structure)
-- [Customization](#customization)
-- [Troubleshooting](#troubleshooting)
+```
+┌─────────────────────┐          gRPC           ┌─────────────────────┐
+│   Manager (your PC) │ ◄─────────────────────► │  Minion (PVE node)  │
+│                     │    build events stream   │                     │
+│  TUI / CLI          │                          │  downloads images   │
+│  SQLite store       │                          │  runs qm commands   │
+│  build history      │                          │  streams logs back  │
+└─────────────────────┘                          └─────────────────────┘
+```
+
+**Single binary, two modes.** The same `pvectgen` binary runs as `manager` on your workstation or as `minion` on Proxmox nodes.
+
+## Quick Start
+
+### 1. Install the Minion on your Proxmox node
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash
+```
+
+This auto-detects the Proxmox hostname, generates an API key, installs a systemd service, and prints a connection token.
+
+### 2. Install the Manager on your workstation
+
+**macOS (Homebrew):**
+```bash
+# From GitHub releases
+curl -fsSL https://github.com/aloks98/pve-ctgen/releases/latest/download/pvectgen_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/').tar.gz | tar xz
+sudo mv pvectgen /usr/local/bin/
+```
+
+**From source:**
+```bash
+git clone https://github.com/aloks98/pve-ctgen.git
+cd pve-ctgen
+make build-local
+```
+
+### 3. Connect to your node
+
+```bash
+pvectgen manager node add --token <token-from-step-1> --display-name "my-node"
+pvectgen manager node health
+```
+
+### 4. Import default templates and launch the TUI
+
+```bash
+pvectgen manager import
+pvectgen manager tui
+```
 
 ## Features
 
-- **Interactive TUI**: Real-time progress tracking with a hierarchical tree view showing all images and their processing steps
-- **Multi-Distribution Support**: Pre-configured for Ubuntu, Debian, Fedora, Rocky Linux, and AlmaLinux
-- **Intelligent Checksum Verification**: Supports multiple checksum formats (SHA512, SHA256, SHA1, MD5) and auto-detects algorithm
-- **Download Caching**: Skips downloads when local files match remote checksums
-- **Live Command Output**: Streams stdout/stderr in real-time during command execution
-- **Error Resilience**: Graceful error handling with per-image error logging
-- **Template-Based Commands**: Configurable command sequences with variable substitution
-- **Cloud-Init Integration**: Full cloud-init support for VM initialization
+- **Multi-node management** — manage templates across multiple Proxmox nodes from one interface
+- **Interactive TUI** — BubbleTea-based terminal UI with live build progress streaming
+- **Full CLI** — every operation available as a CLI command for scripting
+- **Cloud-init management** — store, edit, and validate cloud-init configs with YAML validation
+- **Build history** — SQLite-backed history of all builds with per-step logs
+- **VM launching** — clone templates with configurable memory, cores, IP (DHCP or static)
+- **One-click deploy** — install script + systemd service for Proxmox nodes
+- **Secure** — API key authentication on all gRPC calls
 
-## Architecture
+## TUI
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         TUI Application                              │
-├─────────────────┬───────────────────────────────────────────────────┤
-│                 │                                                    │
-│   Steps Tree    │    Step View (current step name)                  │
-│   (Progress)    │───────────────────────────────────────────────────│
-│                 │    Command View (executing command)               │
-│   ❔ Image 1    │───────────────────────────────────────────────────│
-│   ├─ ✅ Step 1  │                                                    │
-│   ├─ ⚙️ Step 2  │    Output View (live command output)              │
-│   └─ ❔ Step 3  │                                                    │
-│   ❔ Image 2    │                                                    │
-│                 │                                                    │
-└─────────────────┴───────────────────────────────────────────────────┘
+pvectgen manager tui
 ```
 
-### Package Structure
+| Screen | Description |
+|--------|-------------|
+| **Nodes** | Add/remove Proxmox nodes, health checks |
+| **Cloud-Init Store** | Add, edit (inline YAML editor), delete configs |
+| **Template Store** | Manage VM template definitions |
+| **Build Steps** | Add, edit, reorder (J/K) build commands |
+| **New Build** | Select templates + node, live progress view |
+| **Build History** | Browse past builds, view per-step logs |
+| **Launch VM** | Pick node → pick template → configure → launch |
 
-| Package | Description |
-|---------|-------------|
-| `main.go` | Application entry point, TUI layout setup |
-| `pkg/types` | Data structures for Image, Step, and UI components |
-| `pkg/ui` | UI components, tree building, and status management |
-| `pkg/generator` | Main orchestration logic and workflow execution |
-| `pkg/utils` | Utilities for downloads, checksums, and command execution |
-| `pkg/style` | Terminal color styling |
+## CLI Reference
 
-## Supported Operating Systems
+```
+pvectgen manager cloudinit list|add|show|edit|remove
+pvectgen manager template  list|add|show|edit|remove
+pvectgen manager steps     list|add|edit|remove|reset
+pvectgen manager node      list|add|remove|health
+pvectgen manager build     run --template name --node name [--all]
+pvectgen manager builds    list|show|logs
+pvectgen manager vm        launch|list
+pvectgen manager import    [--images path] [--steps path] [--cloudinit-dir path]
+pvectgen manager tui
 
-The tool comes pre-configured with the following cloud images:
+pvectgen minion serve      [--config /etc/pvectgen/minion.yaml]
+pvectgen minion connect    [--config /etc/pvectgen/minion.yaml]
+```
 
-| VM ID | Name | Distribution | Version | Cloud-Init Config |
-|-------|------|--------------|---------|-------------------|
-| 8201 | ubuntu2404 | Ubuntu | 24.04 LTS | ubuntu.yaml |
-| 8202 | debian13 | Debian | 13 (Trixie) | debian.yaml |
-| 8203 | debian12 | Debian | 12 (Bookworm) | debian.yaml |
-| 8204 | alma10 | AlmaLinux | 10 | almalinux.yaml |
-| 8205 | alma9 | AlmaLinux | 9 | almalinux.yaml |
-| 8206 | fedora42 | Fedora | 42 | fedora.yaml |
-| 8207 | rocky10 | Rocky Linux | 10 | rocky.yaml |
-| 8208 | rocky9 | Rocky Linux | 9 | rocky.yaml |
+## Deployment
 
-## Prerequisites
+### Automated (GitHub Releases)
 
-- **Proxmox VE**: A running Proxmox VE node (tested on PVE 7.x and 8.x)
-- **Root Access**: Root/sudo privileges on the Proxmox node
-- **Storage**:
-  - `/var/lib/vz/template/iso` for downloaded images
-  - `/var/lib/vz/snippets` for cloud-init configurations
-  - `local-lvm` storage for VM disks
-- **Network**: Internet access for downloading cloud images
-- **Go 1.24+**: Required only if building from source
+Every tagged release builds binaries for Linux and macOS (amd64 + arm64) via GoReleaser.
 
-## Installation
+**Install minion on Proxmox:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash
+# Or with a specific version:
+curl -fsSL .../install-minion.sh | bash -s -- v1.0.0
+```
 
-### Option 1: Build from Source
+**Deploy via SSH (from your workstation):**
+```bash
+make deploy NODE=root@192.168.1.100
+```
+
+### Creating a release
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/pve-ctgen.git
-cd pve-ctgen
-
-# Build for Linux (cross-compile if on macOS/Windows)
-make build
-
-# Copy to Proxmox node
-scp -r bin/ root@proxmox-host:/root/pve-ctgen
+make release VERSION=v1.0.0
+# Tags, pushes → GitHub Actions builds + publishes
 ```
 
-### Option 2: Manual Build
+### Local snapshot build (all platforms)
 
 ```bash
-# Build the binary
-GOOS=linux GOARCH=amd64 go build -o bin/generate main.go
-
-# Copy configuration files
-cp -r config/ bin/
-cp -r cloudinit/ bin/
-
-# Deploy to Proxmox
-scp -r bin/ root@proxmox-host:/root/pve-ctgen
+make snapshot
+ls dist/
 ```
 
 ## Configuration
 
-### OS List Configuration
-
-The `config/os_list.json` file defines which OS images to template:
-
-```json
-[
-  {
-    "id": 8201,
-    "name": "ubuntu2404",
-    "url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-    "checksum_url": "https://cloud-images.ubuntu.com/noble/current/SHA256SUMS",
-    "tags": "ubuntu,cloudinit,template",
-    "vendor": "ubuntu.yaml"
-  }
-]
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | integer | Yes | Unique Proxmox VM ID for the template |
-| `name` | string | Yes | Name for the downloaded image and template |
-| `url` | string | Yes | Direct download URL for the qcow2/img cloud image |
-| `checksum_url` | string | No | URL to checksum file for verification |
-| `tags` | string | Yes | Comma-separated Proxmox tags |
-| `vendor` | string | Yes | Cloud-init config filename in `cloudinit/` directory |
-
-### Steps Configuration
-
-The `config/steps.json` file defines the template creation workflow:
-
-```json
-[
-  {
-    "name": "Destroy VM if exists",
-    "command": "qm destroy {{.ID}} --purge || true"
-  },
-  {
-    "name": "Resize disk to 32GB",
-    "command": "qemu-img resize {{.FilePath}} 32G"
-  },
-  {
-    "name": "Create VM",
-    "command": "qm create {{.ID}} --name {{.Name}} --memory 1024 --cores 2 --cpu host --bios ovmf --machine q35 --net0 virtio,bridge=vmbr0"
-  },
-  {
-    "name": "Import disk",
-    "command": "qm importdisk {{.ID}} {{.FilePath}} local-lvm"
-  },
-  {
-    "name": "Set disk options",
-    "command": "qm set {{.ID}} --virtio0 local-lvm:vm-{{.ID}}-disk-0,discard=on"
-  },
-  {
-    "name": "Set boot options",
-    "command": "qm set {{.ID}} --boot c --bootdisk virtio0"
-  },
-  {
-    "name": "Set cloud-init drive",
-    "command": "qm set {{.ID}} --scsi1 local-lvm:cloudinit"
-  },
-  {
-    "name": "Set IP configuration",
-    "command": "qm set {{.ID}} --ipconfig0 ip=dhcp"
-  },
-  {
-    "name": "Set tags",
-    "command": "qm set {{.ID}} --tags {{.Tags}}"
-  },
-  {
-    "name": "Set credentials",
-    "command": "qm set {{.ID}} --cipassword yourpassword --ciuser root"
-  },
-  {
-    "name": "Set cloud-init user data",
-    "command": "qm set {{.ID}} --cicustom user=local:snippets/{{.Vendor}}"
-  },
-  {
-    "name": "Convert to template",
-    "command": "qm template {{.ID}}"
-  }
-]
-```
-
-#### Available Template Variables
-
-| Variable | Description | Example Value |
-|----------|-------------|---------------|
-| `{{.ID}}` | VM ID from os_list.json | `8201` |
-| `{{.Name}}` | Image name from os_list.json | `ubuntu2404` |
-| `{{.Tags}}` | Tags from os_list.json | `ubuntu,cloudinit,template` |
-| `{{.Vendor}}` | Cloud-init config filename | `ubuntu.yaml` |
-| `{{.FilePath}}` | Path to downloaded image | `base.qcow2` |
-
-### Cloud-Init Configuration
-
-Cloud-init YAML files in the `cloudinit/` directory configure the VM on first boot:
+### Manager (`~/.config/pvectgen/config.yaml`)
 
 ```yaml
-#cloud-config
-hostname: ubuntu-template
-
-# System updates
-package_update: true
-package_upgrade: true
-
-# Locale and timezone
-locale: en_US.UTF-8
-timezone: America/New_York
-
-# User configuration
-users:
-  - name: admin
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAA... your-key-here
-
-# Package installation
-packages:
-  - qemu-guest-agent
-  - curl
-  - git
-  - vim
-
-# Post-install commands
-runcmd:
-  - systemctl enable qemu-guest-agent
-  - systemctl start qemu-guest-agent
+db_path: "~/.config/pvectgen/pvectgen.db"
+default_node: "my-node"
 ```
 
-#### Distribution-Specific Notes
+### Minion (`/etc/pvectgen/minion.yaml`)
 
-| Distribution | Package Manager | Sudo Group | Notes |
-|--------------|-----------------|------------|-------|
-| Ubuntu/Debian | apt | `sudo` | Uses APT repositories |
-| Fedora | dnf | `wheel` | Uses DNF repositories |
-| Rocky/AlmaLinux | dnf | `wheel` | Enable CRB repo for additional packages |
-
-## Usage
-
-### Running the Generator
-
-```bash
-# SSH into Proxmox node
-ssh root@proxmox-host
-
-# Navigate to installation directory
-cd /root/pve-ctgen
-
-# Run the generator
-./generate
-```
-
-### TUI Controls
-
-| Key | Action |
-|-----|--------|
-| `ESC` | Exit application (with confirmation) |
-| Arrow keys | Navigate tree view |
-| `Enter` | Expand/collapse tree nodes |
-
-### Status Indicators
-
-| Icon | Status |
-|------|--------|
-| ❔ | Pending |
-| ⚙️ | Running |
-| ✅ | Success |
-| ❌ | Failed |
-| ➖ | Skipped |
-
-## How It Works
-
-### Execution Flow
-
-```
-1. Load Configuration
-   └── Read os_list.json and steps.json
-
-2. Initialize UI
-   └── Build tree view with all images and steps
-
-3. Create Directories
-   ├── /var/lib/vz/template/iso
-   ├── /var/lib/vz/snippets
-   └── logs/
-
-4. Process Each Image
-   │
-   ├── Download Phase
-   │   ├── Check for existing local file
-   │   ├── Fetch and parse remote checksum
-   │   ├── Calculate local file checksum
-   │   ├── Compare checksums
-   │   └── Download if mismatch or missing
-   │
-   ├── Prepare Phase
-   │   └── Copy downloaded image to base.qcow2
-   │
-   ├── Execute Steps
-   │   ├── Copy cloud-init config to /var/lib/vz/snippets/
-   │   ├── For each step in steps.json:
-   │   │   ├── Replace template variables
-   │   │   ├── Execute command
-   │   │   ├── Stream output to UI
-   │   │   └── Update status (✅/❌)
-   │   └── Skip remaining steps on failure
-   │
-   └── Cleanup Phase
-       └── Remove base.qcow2
-
-5. Display Summary
-   └── List any failed images
-```
-
-### Checksum Format Support
-
-The tool intelligently parses multiple checksum file formats:
-
-| Format | Example | Used By |
-|--------|---------|---------|
-| Standard | `abc123... filename.img` | Ubuntu, Debian |
-| Fedora | `## filename.img`<br>`SHA256: abc123...` | Fedora |
-| Rocky/Alma | `filename.img (SHA256) = abc123...` | Rocky, AlmaLinux |
-| Single Value | `abc123...` | Various |
-
-## Project Structure
-
-```
-pve-ctgen/
-├── main.go                 # Application entry point
-├── go.mod                  # Go module definition
-├── go.sum                  # Dependency checksums
-├── Makefile                # Build automation
-├── README.md               # This documentation
-│
-├── config/
-│   ├── os_list.json        # OS image definitions
-│   └── steps.json          # Template creation steps
-│
-├── cloudinit/
-│   ├── ubuntu.yaml         # Ubuntu cloud-init config
-│   ├── debian.yaml         # Debian cloud-init config
-│   ├── fedora.yaml         # Fedora cloud-init config
-│   ├── rocky.yaml          # Rocky Linux cloud-init config
-│   └── almalinux.yaml      # AlmaLinux cloud-init config
-│
-├── pkg/
-│   ├── types/
-│   │   └── types.go        # Data structures
-│   ├── ui/
-│   │   └── ui.go           # UI components
-│   ├── generator/
-│   │   └── generator.go    # Main workflow logic
-│   ├── utils/
-│   │   └── utils.go        # Utility functions
-│   └── style/
-│       └── style.go        # Terminal styling
-│
-├── bin/                    # Build output (generated)
-└── logs/                   # Error logs (generated at runtime)
-```
-
-## Customization
-
-### Adding a New OS
-
-1. **Add image definition** to `config/os_list.json`:
-```json
-{
-  "id": 8210,
-  "name": "centos-stream9",
-  "url": "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2",
-  "checksum_url": "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2.SHA256SUM",
-  "tags": "centos,cloudinit,template",
-  "vendor": "centos.yaml"
-}
-```
-
-2. **Create cloud-init config** in `cloudinit/centos.yaml`:
 ```yaml
-#cloud-config
-hostname: centos-template
-package_update: true
-packages:
-  - qemu-guest-agent
-runcmd:
-  - systemctl enable --now qemu-guest-agent
+listen_address: "0.0.0.0:50051"
+node_name: ""        # Auto-detected from Proxmox hostname
+api_key: ""          # Auto-generated on first run
+iso_path: "/var/lib/vz/template/iso"
+snippets_path: "/var/lib/vz/snippets"
+work_dir: "/tmp/pvectgen"
 ```
 
-### Modifying VM Hardware
+## Template Variables
 
-Edit `config/steps.json` to change VM specifications:
+Build step commands support these placeholders:
 
-```json
-{
-  "name": "Create VM",
-  "command": "qm create {{.ID}} --name {{.Name}} --memory 2048 --cores 4 --cpu host --bios ovmf --machine q35 --net0 virtio,bridge=vmbr0"
-}
-```
+| Variable | Source | Example |
+|----------|--------|---------|
+| `{{.ID}}` | Template VM ID | `8201` |
+| `{{.Name}}` | Template name | `ubuntu2404` |
+| `{{.Tags}}` | Comma-separated tags | `ubuntu,cloudinit` |
+| `{{.Vendor}}` | Cloud-init filename | `ubuntu.yaml` |
+| `{{.FilePath}}` | Working image path | `/tmp/pvectgen/base.qcow2` |
 
-### Changing Storage
+## Supported OS Images (defaults)
 
-Modify the storage target in `steps.json`:
+| VM ID | Name | Distribution |
+|-------|------|-------------|
+| 8201 | ubuntu2404 | Ubuntu 24.04 LTS |
+| 8202 | debian13 | Debian 13 |
+| 8203 | debian12 | Debian 12 |
+| 8204 | alma10 | AlmaLinux 10 |
+| 8205 | alma9 | AlmaLinux 9 |
+| 8206 | fedora43 | Fedora 43 |
+| 8207 | rocky10 | Rocky Linux 10 |
+| 8208 | rocky9 | Rocky Linux 9 |
 
-```json
-{
-  "name": "Import disk",
-  "command": "qm importdisk {{.ID}} {{.FilePath}} zfs-pool"
-}
-```
+Add more via `pvectgen manager template add` or by editing `config/os_list.json` and running `pvectgen manager import`.
 
-## Troubleshooting
+## Development
 
-### Common Issues
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| Permission denied | Not running as root | Run with `sudo` or as root user |
-| Storage not found | Wrong storage name in steps.json | Verify storage exists with `pvesm status` |
-| Download fails | Network/firewall issues | Check connectivity to image URLs |
-| Checksum mismatch | Corrupted download or outdated URL | Delete local file and retry |
-| VM ID conflict | ID already in use | Change ID in os_list.json or delete existing VM |
-
-### Error Logs
-
-Detailed error logs are written to the `logs/` directory:
 ```bash
-# View error log for a specific image
-cat logs/ubuntu2404.error.log
+make build-local    # Build for current platform
+make build          # Cross-compile for Linux amd64
+make lint           # go vet
+make test           # go test ./...
+make proto          # Regenerate protobuf (requires protoc)
+make snapshot       # GoReleaser local build (all platforms)
 ```
 
-### Debug Mode
+## Architecture
 
-To see raw command output, check the live output panel in the TUI or review error logs.
-
-### Verifying Templates
-
-After generation, verify templates in Proxmox:
-```bash
-# List all templates
-qm list | grep template
-
-# Check template configuration
-qm config 8201
 ```
-
-## Warning
-
-**Data Loss Risk**: This application will **permanently destroy any existing Proxmox VMs** that share an ID with entries in `config/os_list.json`. This is intentional to ensure clean template creation. Always verify VM IDs before running.
+cmd/pvectgen/main.go           Cobra root command
+internal/
+  shared/                      Shared code (models, checksum, download, validation, token)
+  manager/
+    cli/                       All manager Cobra subcommands
+    tui/                       BubbleTea app, views, components, styles
+    store/                     SQLite CRUD + migrations
+    grpc/client.go             gRPC client to minions
+    config/                    Manager YAML config
+  minion/
+    cli/                       serve + connect commands, Proxmox checks
+    server/                    gRPC server + auth interceptor
+    builder/                   Build orchestration
+    executor/                  Channel-based shell execution
+    config/                    Minion YAML config + auto-detection
+proto/pvectgen/v1/             Protobuf service definition
+```
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT

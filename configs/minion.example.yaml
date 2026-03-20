@@ -1,0 +1,20 @@
+# pvectgen Minion configuration
+# Default location: /etc/pvectgen/minion.yaml
+
+# gRPC listen address
+listen_address: "0.0.0.0:50051"
+
+# Node name — auto-detected from Proxmox hostname if left empty (recommended)
+node_name: ""
+
+# API key for authentication (auto-generated on first run if empty)
+api_key: ""
+
+# Path where cloud images are downloaded
+iso_path: "/var/lib/vz/template/iso"
+
+# Path where cloud-init snippets are stored
+snippets_path: "/var/lib/vz/snippets"
+
+# Temporary working directory for builds
+work_dir: "/tmp/pvectgen"

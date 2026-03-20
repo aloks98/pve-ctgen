@@ -1,0 +1,8 @@
+# pvectgen Manager configuration
+# Default location: ~/.config/pvectgen/config.yaml
+
+# Path to the SQLite database
+db_path: "~/.config/pvectgen/pvectgen.db"
+
+# Default node for build commands (optional)
+default_node: ""

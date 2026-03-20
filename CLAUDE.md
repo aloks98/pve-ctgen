@@ -4,203 +4,142 @@ This file provides context for Claude and other AI assistants when working on th
 
 ## Project Overview
 
-**pve-ctgen** (Proxmox VE Cloud-Init Template Generator) is a Go-based TUI application that automates creating Proxmox VE virtual machine templates from cloud images. It downloads images, verifies checksums, configures VMs with cloud-init, and converts them to templates.
+**pve-ctgen** (Proxmox VE Cloud-Init Template Generator) is a Go-based manager-minion system for creating Proxmox VE virtual machine templates from cloud images. A single binary provides two modes:
+
+- **Manager** (`pvectgen manager ...`): CLI/TUI on user's workstation — manages templates, cloud-init configs, build steps, nodes, triggers builds, launches VMs
+- **Minion** (`pvectgen minion serve`): Headless agent on each Proxmox node — receives commands via gRPC, executes builds, streams logs back
 
 ## Tech Stack
 
-- **Language**: Go 1.24+
-- **TUI Framework**: `github.com/rivo/tview` (built on `tcell`)
-- **Terminal Colors**: `github.com/fatih/color`
-- **Target Platform**: Linux (Proxmox VE nodes)
-- **Build**: Cross-compiled from any platform via Makefile
+| Component | Choice |
+|-----------|--------|
+| Language | Go 1.24+ |
+| CLI framework | Cobra |
+| TUI framework | BubbleTea + Lipgloss + Bubbles |
+| Manager-Minion comms | gRPC (server streaming for builds) |
+| Manager storage | SQLite via `modernc.org/sqlite` (pure Go) |
+| Config format | YAML via `gopkg.in/yaml.v3` |
+| Auth | API key in gRPC metadata |
+| Proxmox interaction | `qm`, `pvesh` shell commands |
+| CI/CD | GitHub Actions + GoReleaser |
 
 ## Project Structure
 
 ```
 pve-ctgen/
-├── main.go                 # Entry point - TUI layout and app initialization
-├── pkg/
-│   ├── types/types.go      # Data structures (Image, Step, UIStep, UIImage)
-│   ├── ui/ui.go            # UI components and tree management
-│   ├── generator/generator.go  # Main orchestration and workflow
-│   ├── utils/utils.go      # Downloads, checksums, command execution
-│   └── style/style.go      # Terminal color helpers
-├── config/
-│   ├── os_list.json        # OS image definitions (id, name, url, checksum_url, tags, vendor)
-│   └── steps.json          # Template creation commands (name, command)
-└── cloudinit/
-    ├── ubuntu.yaml         # Ubuntu cloud-init config
-    ├── debian.yaml         # Debian cloud-init config
-    ├── fedora.yaml         # Fedora cloud-init config
-    ├── rocky.yaml          # Rocky Linux cloud-init config
-    └── almalinux.yaml      # AlmaLinux cloud-init config
+├── cmd/pvectgen/main.go              # Single binary entry point (Cobra root)
+├── internal/
+│   ├── shared/                       # Code shared by manager and minion
+│   │   ├── models/models.go          # All data models
+│   │   ├── checksum/checksum.go      # Checksum parsing and verification
+│   │   ├── cloudinit/validate.go     # YAML validation for cloud-init configs
+│   │   ├── download/download.go      # HTTP download with progress callback
+│   │   ├── token/token.go            # Connection token encode/decode
+│   │   └── fileutil/fileutil.go      # File utilities
+│   ├── manager/
+│   │   ├── cli/                      # All Cobra commands
+│   │   ├── tui/
+│   │   │   ├── app.go               # BubbleTea root model + build orchestration
+│   │   │   ├── views/               # home, nodes, cloudinit, templates, steps, builds, buildselect, buildprogress, vmlaunch
+│   │   │   ├── components/           # table, form, logviewer, statusbar
+│   │   │   └── styles/styles.go     # Lipgloss theme
+│   │   ├── store/                    # SQLite CRUD for all entities
+│   │   ├── grpc/client.go           # gRPC client to Minion
+│   │   └── config/config.go         # Manager YAML config
+│   └── minion/
+│       ├── cli/                      # serve, connect + Proxmox environment check
+│       ├── server/server.go         # gRPC server + API key interceptor
+│       ├── executor/executor.go     # Channel-based shell command execution
+│       ├── builder/builder.go       # Build orchestration
+│       └── config/config.go         # Minion YAML config + auto node name + API key gen
+├── proto/pvectgen/v1/               # Protobuf service definition + generated code
+├── configs/                         # Example configs + systemd unit
+├── scripts/install-minion.sh        # One-line minion installer
+├── config/                          # Seed data (os_list.json, steps.json)
+├── cloudinit/                       # Seed cloud-init configs
+├── .github/workflows/               # CI + release pipelines
+├── .goreleaser.yml                  # Multi-platform release config
+└── Makefile
 ```
 
-## Key Data Structures
+## CLI Command Tree
 
-```go
-// pkg/types/types.go
-
-type Image struct {
-    ID          int    `json:"id"`           // Proxmox VM ID
-    Name        string `json:"name"`         // Image/template name
-    URL         string `json:"url"`          // Download URL
-    ChecksumURL string `json:"checksum_url"` // Optional checksum file URL
-    Tags        string `json:"tags"`         // Comma-separated Proxmox tags
-    Vendor      string `json:"vendor"`       // Cloud-init config filename
-}
-
-type Step struct {
-    Name    string `json:"name"`    // Display name
-    Command string `json:"command"` // Shell command with {{.Var}} placeholders
-}
+```
+pvectgen
+├── manager
+│   ├── tui                          # Interactive TUI
+│   ├── cloudinit list|add|show|edit|remove
+│   ├── template list|add|show|edit|remove
+│   ├── steps list|add|edit|remove|reset
+│   ├── node list|add|remove|health
+│   ├── build run|cancel
+│   ├── builds list|show|logs
+│   ├── vm launch|list
+│   └── import
+├── minion
+│   ├── serve [--config path]
+│   └── connect
+└── version
 ```
 
-## Core Workflow
+## gRPC Service
 
-1. **Load configs** from `config/os_list.json` and `config/steps.json`
-2. **Build UI tree** with images as parent nodes, steps as children
-3. **For each image**:
-   - Download & verify checksum (supports SHA512, SHA256, SHA1, MD5)
-   - Copy image to `base.qcow2`
-   - Copy cloud-init config to `/var/lib/vz/snippets/`
-   - Execute each step command with template variable substitution
-   - Clean up `base.qcow2`
-4. **Display summary** of failed/successful images
-
-## Template Variables
-
-Commands in `steps.json` support these placeholders:
-
-| Variable | Source | Example |
-|----------|--------|---------|
-| `{{.ID}}` | Image.ID | `8201` |
-| `{{.Name}}` | Image.Name | `ubuntu2404` |
-| `{{.Tags}}` | Image.Tags | `ubuntu,cloudinit` |
-| `{{.Vendor}}` | Image.Vendor | `ubuntu.yaml` |
-| `{{.FilePath}}` | Hardcoded | `base.qcow2` |
-
-## Checksum Parsing
-
-The `GetExpectedChecksum()` function in `pkg/utils/utils.go` handles multiple formats:
-
-1. **Standard**: `checksum  filename`
-2. **Fedora**: `## filename` followed by `SHA256: checksum`
-3. **Rocky/Alma**: `filename (ALGORITHM) = checksum`
-4. **Single value**: Just the checksum string
-
-Algorithm detection is based on checksum length (128=SHA512, 64=SHA256, 40=SHA1, 32=MD5).
-
-## UI Components
-
-```go
-// pkg/ui/ui.go
-
-type UI struct {
-    App         *tview.Application
-    StepsTree   *tview.TreeView   // Left panel - progress tree
-    StepView    *tview.TextView   // Top-right - current step name
-    CommandView *tview.TextView   // Middle-right - executing command
-    OutputView  *tview.TextView   // Bottom-right - live output
+```protobuf
+service MinionService {
+  rpc Build(BuildRequest) returns (stream BuildEvent);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc LaunchVM(LaunchVMRequest) returns (LaunchVMResponse);
+  rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
 }
 ```
 
-### Status Icons
+Auth: API key in `x-api-key` gRPC metadata, validated by unary+stream interceptor.
 
-- `❔` Pending (yellow)
-- `⚙️` Running (yellow)
-- `✅` Success (green)
-- `❌` Failed (red)
-- `➖` Skipped (gray)
+## Key Workflows
 
-## Important Functions
+### Minion Onboarding
+1. Install on Proxmox: `curl -fsSL .../install-minion.sh | bash`
+2. Auto-detects hostname, generates API key, outputs connection token
+3. On workstation: `pvectgen manager node add --token <token> --display-name "prod"`
 
-### pkg/generator/generator.go
-- `Run(ui *ui.UI)` - Main entry point, orchestrates the entire workflow
+### Build Flow (TUI)
+1. Home → New Build → select templates (space/a) → enter → select node → enter
+2. App connects to minion via gRPC, streams BuildEvents back
+3. Live split-pane progress: step tree (left) + logs (right)
+4. Results persisted to SQLite build history
 
-### pkg/utils/utils.go
-- `LoadImages(path)` - Parse os_list.json
-- `LoadSteps(path)` - Parse steps.json
-- `HandleDownloadAndChecksum()` - Download logic with checksum verification
-- `GetExpectedChecksum()` - Parse various checksum file formats
-- `CalculateFileChecksum()` - Compute file checksum
-- `ExecuteCommands()` - Run templated commands for an image
-- `RunCommandWithStreaming()` - Execute shell command with live output
-
-### pkg/ui/ui.go
-- `NewUI()` - Initialize all UI components
-- `BuildUITree()` - Construct tree from images/steps
-- `UpdateNodeStatus()` - Change node icon and color
-
-## Common Tasks
-
-### Adding a new OS
-1. Add entry to `config/os_list.json` with unique ID
-2. Create cloud-init YAML in `cloudinit/` if needed
-3. Set `vendor` field to the YAML filename
-
-### Modifying VM hardware
-Edit the "Create VM" step in `config/steps.json`:
-```json
-{
-  "name": "Create VM",
-  "command": "qm create {{.ID}} --name {{.Name}} --memory 2048 --cores 4 ..."
-}
-```
-
-### Adding a new step
-Append to `config/steps.json`:
-```json
-{
-  "name": "Step Name",
-  "command": "command --with {{.ID}} placeholders"
-}
-```
-
-### Changing default storage
-Modify `local-lvm` references in `config/steps.json` to your storage name.
+### VM Launch (TUI)
+1. Select node → fetches templates from minion via `pvesh` API
+2. Select template → configure VM (text inputs + select toggles)
+3. Static IP shows extra fields (address + gateway)
+4. Launches via gRPC LaunchVM
 
 ## Build Commands
 
 ```bash
-make build   # Cross-compile for Linux, package to bin/
-make lint    # Run golint
+make build-local    # Build for current platform
+make build          # Cross-compile for Linux amd64
+make lint           # go vet
+make test           # go test
+make proto          # Regenerate protobuf
+make deploy NODE=root@ip  # Deploy minion via SSH
+make snapshot       # GoReleaser local build (all platforms)
+make release VERSION=v1.0.0  # Tag + push (triggers GitHub Actions)
 ```
 
-## File Paths Used at Runtime
+## Configuration
 
-| Path | Purpose |
-|------|---------|
-| `/var/lib/vz/template/iso/` | Downloaded cloud images |
-| `/var/lib/vz/snippets/` | Cloud-init configs |
-| `./logs/` | Per-image error logs |
-| `./base.qcow2` | Temporary working copy of image |
+- **Manager**: `~/.config/pvectgen/config.yaml` (db_path, default_node)
+- **Minion**: `/etc/pvectgen/minion.yaml` (listen_address, node_name, api_key, paths)
 
-## Error Handling Pattern
+## Validation
 
-- Errors during image processing mark the image as failed
-- Remaining steps for that image are marked as "skipped"
-- Detailed errors logged to `logs/{imagename}.error.log`
-- Processing continues to next image
+Cloud-init YAML is validated at every entry point:
+- CLI add/edit: `ValidateStrict` (rejects invalid YAML, warns on unknown keys)
+- TUI add/edit: same, shown in status bar
+- Import/seed: `Validate` (warns, imports anyway)
+- Minion builder: `Validate` (rejects, fails build)
 
-## Code Style Notes
+## Proxmox Environment Check
 
-- Uses goroutines for non-blocking UI updates
-- Command output streaming uses separate goroutines for stdout/stderr
-- Progress updates rate-limited to 100ms for UI responsiveness
-- All Proxmox commands use `qm` CLI tool
-
-## Testing Locally
-
-The binary must run on a Proxmox node with:
-- Root privileges
-- `qm` command available
-- Network access to image URLs
-- `local-lvm` storage (or modified config)
-
-## Dependencies
-
-Direct:
-- `github.com/rivo/tview` - TUI framework
-- `github.com/gdamore/tcell/v2` - Terminal handling
-- `github.com/fatih/color` - Colored output
+Minion commands (`serve`, `connect`) verify: Linux OS, `pveversion` on PATH, `qm` on PATH, `/etc/pve` exists.

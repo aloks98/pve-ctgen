@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package pvectgen.v1;
+
+option go_package = "github.com/aloks98/pve-ctgen/proto/pvectgen/v1;pvectgenv1";
+
+service MinionService {
+  rpc Build(BuildRequest) returns (stream BuildEvent);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc LaunchVM(LaunchVMRequest) returns (LaunchVMResponse);
+  rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
+}
+
+message Image {
+  int32 id = 1;
+  string name = 2;
+  string url = 3;
+  string checksum_url = 4;
+  string tags = 5;
+  string vendor = 6;
+}
+
+message BuildStep {
+  string name = 1;
+  string command = 2;
+}
+
+message BuildRequest {
+  string build_id = 1;
+  Image image = 2;
+  repeated BuildStep steps = 3;
+  bytes cloudinit_content = 4;
+  string cloudinit_filename = 5;
+  map<string, string> options = 6;
+}
+
+message BuildEvent {
+  string build_id = 1;
+  string step_name = 2;
+  BuildEventType type = 3;
+  string message = 4;
+  int32 step_index = 5;
+  double progress = 6;
+}
+
+enum BuildEventType {
+  BUILD_EVENT_TYPE_UNSPECIFIED = 0;
+  BUILD_EVENT_TYPE_STEP_STARTED = 1;
+  BUILD_EVENT_TYPE_LOG = 2;
+  BUILD_EVENT_TYPE_STEP_COMPLETED = 3;
+  BUILD_EVENT_TYPE_STEP_FAILED = 4;
+  BUILD_EVENT_TYPE_DOWNLOAD_PROGRESS = 5;
+  BUILD_EVENT_TYPE_BUILD_COMPLETED = 6;
+  BUILD_EVENT_TYPE_BUILD_FAILED = 7;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string node_name = 1;
+  string version = 2;
+  bool healthy = 3;
+  string proxmox_version = 4;
+  repeated string available_storage = 5;
+}
+
+message LaunchVMRequest {
+  int32 template_id = 1;
+  int32 new_vm_id = 2;
+  string name = 3;
+  bool start = 4;
+  bool start_at_boot = 5;
+  string ip_config = 6;
+  int32 memory = 7;
+  int32 cores = 8;
+}
+
+message LaunchVMResponse {
+  int32 vm_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message ListTemplatesRequest {}
+
+message TemplateInfo {
+  int32 vm_id = 1;
+  string name = 2;
+  string tags = 3;
+}
+
+message ListTemplatesResponse {
+  repeated TemplateInfo templates = 1;
+}

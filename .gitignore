@@ -1,3 +1,9 @@
 .idea
 generate_templates
 /bin
+/dist
+/pvectgen
+*.db
+config.yaml
+!config/
+!configs/

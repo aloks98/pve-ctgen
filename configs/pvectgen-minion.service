@@ -1,0 +1,15 @@
+[Unit]
+Description=pvectgen Minion - Proxmox VE Template Build Agent
+After=network.target pve-cluster.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pvectgen minion serve --config /etc/pvectgen/minion.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+User=root
+
+[Install]
+WantedBy=multi-user.target
