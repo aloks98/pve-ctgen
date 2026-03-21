@@ -187,6 +187,15 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 		})
 
 		command := executor.SubstituteVars(step.Command, vars)
+
+		// Log the actual command being run
+		sendEvent(&pb.BuildEvent{
+			Type:      pb.BuildEventType_BUILD_EVENT_TYPE_LOG,
+			StepName:  step.Name,
+			StepIndex: int32(i),
+			Message:   fmt.Sprintf("$ %s", command),
+		})
+
 		output := make(chan string, 100)
 		drained := make(chan struct{})
 

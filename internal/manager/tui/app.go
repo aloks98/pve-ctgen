@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -57,10 +58,12 @@ type AppModel struct {
 }
 
 // NewApp creates a new AppModel.
-func NewApp(db *store.DB) AppModel {
+func NewApp(db *store.DB, version string) AppModel {
+	home := views.NewHomeModel(db, version)
+	home.Refresh()
 	return AppModel{
 		currentView:   ViewHome,
-		homeModel:     views.NewHomeModel(),
+		homeModel:     home,
 		cloudinitView: views.NewCloudInitModel(db),
 		templatesView: views.NewTemplatesModel(db),
 		stepsView:     views.NewStepsModel(db),
@@ -75,6 +78,7 @@ func NewApp(db *store.DB) AppModel {
 
 // Init implements tea.Model.
 func (m AppModel) Init() tea.Cmd {
+	m.homeModel.Refresh()
 	return nil
 }
 
@@ -87,6 +91,8 @@ func (m *AppModel) inSubView() bool {
 		return m.templatesView.InSubView()
 	case ViewSteps:
 		return m.stepsView.InSubView()
+	case ViewBuilds:
+		return m.buildsView.InSubView()
 	case ViewVMLaunch:
 		return m.vmLaunch.InSubView()
 	case ViewNodes:
@@ -94,7 +100,7 @@ func (m *AppModel) inSubView() bool {
 	case ViewBuildSelect:
 		return m.buildSelect.InSubView()
 	case ViewBuildProgress:
-		return !m.buildProgress.Done // capture keys during build
+		return false // esc sends build to background, never blocks
 	}
 	return false
 }
@@ -133,15 +139,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == ViewHome {
 				return m, tea.Quit
 			}
+			if m.currentView == ViewBuildProgress && m.buildProgress.Running() {
+				m.buildProgress.Backgrounded = true
+			}
 			m.currentView = ViewHome
+			m.homeModel.Refresh()
 			return m, nil
 		case "esc":
+			if m.currentView == ViewBuildProgress && m.buildProgress.Running() {
+				m.buildProgress.Backgrounded = true
+			}
 			if m.currentView != ViewHome {
 				m.currentView = ViewHome
+				m.homeModel.Refresh()
 				return m, nil
 			}
 			return m, tea.Quit
 		}
+
+	// Build events are always handled, even when backgrounded on another view
+	case views.BuildEventMsg, views.BuildDoneMsg:
+		var cmd tea.Cmd
+		m.buildProgress, cmd = m.buildProgress.Update(msg)
+		// If we're on the build progress view, return the cmd to keep listening
+		if m.currentView == ViewBuildProgress {
+			return m, cmd
+		}
+		// Backgrounded — still process events but don't show them
+		return m, cmd
 
 	case views.StartBuildMsg:
 		// Template + node selected — launch the build
@@ -171,6 +196,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+
+	// Sync build status to home
+	m.homeModel.BuildRunning = m.buildProgress.Running()
 
 	// Delegate to current view
 	var cmd tea.Cmd
@@ -208,7 +236,7 @@ func (m AppModel) View() string {
 		return "Loading..."
 	}
 
-	title := styles.TitleStyle.Width(m.width).Render(" pvectgen manager")
+	title := styles.TitleStyle.Width(m.width).Render(" pvectgen")
 
 	var content string
 	switch m.currentView {
@@ -232,48 +260,73 @@ func (m AppModel) View() string {
 		content = m.nodesView.View()
 	}
 
-	m.statusBar.LeftText = m.viewHelp()
-	m.statusBar.RightText = fmt.Sprintf("View: %s", m.viewName())
+	// Pad content to fill available height
+	contentHeight := m.height - 3 // title(1) + statusbar(1) + padding
+	contentLines := strings.Count(content, "\n")
+	if contentLines < contentHeight {
+		content += strings.Repeat("\n", contentHeight-contentLines)
+	}
+
+	m.statusBar.Width = m.width
+	m.statusBar.Breadcrumb = m.breadcrumb()
+	m.statusBar.HelpKeys = m.helpKeys()
+	m.statusBar.RightText = m.rightStatus()
 	statusBar := m.statusBar.View()
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, content, statusBar)
 }
 
-func (m AppModel) viewName() string {
+func (m AppModel) breadcrumb() string {
+	base := "pvectgen"
 	switch m.currentView {
 	case ViewHome:
-		return "Home"
+		return base
 	case ViewCloudInit:
-		return "Cloud-Init"
+		return base + " > cloud-init"
 	case ViewTemplates:
-		return "Templates"
+		return base + " > templates"
 	case ViewSteps:
-		return "Steps"
+		return base + " > steps"
 	case ViewBuilds:
-		return "Builds"
+		return base + " > builds"
 	case ViewBuildSelect:
-		return "Build Select"
+		return base + " > new build"
 	case ViewBuildProgress:
-		return "Build Progress"
+		return base + " > build progress"
 	case ViewVMLaunch:
-		return "VM Launch"
+		return base + " > launch vm"
 	case ViewNodes:
-		return "Nodes"
+		return base + " > nodes"
 	default:
-		return "Unknown"
+		return base
 	}
 }
 
-func (m AppModel) viewHelp() string {
+func (m AppModel) helpKeys() string {
 	if m.inSubView() {
-		return "see view for controls"
+		return ""
 	}
 	switch m.currentView {
 	case ViewHome:
-		return "↑↓ navigate • enter select • q quit"
+		return styles.HelpBar(
+			styles.HelpEntry("j/k", "move"),
+			styles.HelpEntry("enter", "select"),
+			styles.HelpEntry("q", "quit"),
+		)
 	default:
-		return "↑↓ navigate • esc back • q home"
+		return styles.HelpBar(
+			styles.HelpEntry("j/k", "move"),
+			styles.HelpEntry("esc", "back"),
+			styles.HelpEntry("q", "home"),
+		)
 	}
+}
+
+func (m AppModel) rightStatus() string {
+	if m.buildProgress.Running() {
+		return styles.WarningStyle.Render("[building]")
+	}
+	return styles.DimStyle.Render(fmt.Sprintf("%d nodes", len(m.nodesView.NodeCount())))
 }
 
 // runBuildInBackground connects to the minion, runs builds, and sends events on the channel.
@@ -304,15 +357,15 @@ func runBuildInBackground(db *store.DB, templates []models.Template, node models
 		// Resolve cloud-init content
 		var ciContent []byte
 		var ciFilename string
-		if tmpl.CloudInitID != nil {
-			ci, err := db.GetCloudInitByID(*tmpl.CloudInitID)
+		if tmpl.CloudInit != "" {
+			ci, err := db.GetCloudInitByID(tmpl.CloudInit)
 			if err == nil {
 				ciContent = []byte(ci.Content)
 				ciFilename = ci.Name
 			}
 		}
 
-		db.CreateBuild(buildID, tmpl.ID, node.ID)
+		db.CreateBuild(buildID, tmpl.Name, node.Name)
 
 		req := &pb.BuildRequest{
 			BuildId: buildID,
@@ -374,8 +427,8 @@ func runBuildInBackground(db *store.DB, templates []models.Template, node models
 }
 
 // Run starts the BubbleTea program.
-func Run(db *store.DB) error {
-	p := tea.NewProgram(NewApp(db), tea.WithAltScreen())
+func Run(db *store.DB, version string) error {
+	p := tea.NewProgram(NewApp(db, version), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

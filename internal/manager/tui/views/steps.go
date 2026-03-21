@@ -68,7 +68,7 @@ func (m *StepsModel) Refresh() {
 			cmd = cmd[:52] + "..."
 		}
 		rows[i] = []string{
-			fmt.Sprintf("%d", s.SortOrder),
+			fmt.Sprintf("%d", i+1),
 			s.Name,
 			cmd,
 		}
@@ -127,7 +127,7 @@ func (m StepsModel) Update(msg tea.Msg) (StepsModel, tea.Cmd) {
 			idx := m.table.SelectedRow()
 			if idx >= 0 && idx < len(m.steps) {
 				s := m.steps[idx]
-				m.detail = fmt.Sprintf("  Name:    %s\n  Order:   %d\n  Command: %s", s.Name, s.SortOrder, s.Command)
+				m.detail = fmt.Sprintf("  Name:    %s\n  Order:   %d\n  Command: %s", s.Name, idx+1, s.Command)
 				m.mode = stepsModeShowCmd
 			}
 		case "d":
@@ -142,8 +142,7 @@ func (m StepsModel) Update(msg tea.Msg) (StepsModel, tea.Cmd) {
 			idx := m.table.SelectedRow()
 			if idx > 0 && idx < len(m.steps) {
 				a := m.steps[idx]
-				b := m.steps[idx-1]
-				if err := m.db.SwapBuildStepOrder(a.ID, b.ID, a.SortOrder, b.SortOrder); err == nil {
+				if err := m.db.SwapBuildStepOrder(idx, idx-1); err == nil {
 					cursor := m.table.Cursor
 					m.Refresh()
 					m.table.Cursor = cursor - 1
@@ -154,8 +153,7 @@ func (m StepsModel) Update(msg tea.Msg) (StepsModel, tea.Cmd) {
 			idx := m.table.SelectedRow()
 			if idx >= 0 && idx < len(m.steps)-1 {
 				a := m.steps[idx]
-				b := m.steps[idx+1]
-				if err := m.db.SwapBuildStepOrder(a.ID, b.ID, a.SortOrder, b.SortOrder); err == nil {
+				if err := m.db.SwapBuildStepOrder(idx, idx+1); err == nil {
 					cursor := m.table.Cursor
 					m.Refresh()
 					m.table.Cursor = cursor + 1

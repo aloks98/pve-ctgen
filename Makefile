@@ -1,20 +1,32 @@
 BINARY_NAME=pvectgen
 BUILD_DIR=bin
 PROTO_DIR=proto
+INSTALL_DIR=/usr/local/bin
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: build build-local lint test proto clean deploy
+.PHONY: build build-local install lint test proto clean deploy
 
 # Cross-compile for Linux (Proxmox)
 build:
 	rm -rf $(BUILD_DIR)
 	mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/pvectgen
+	GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/pvectgen
 	cp -r cloudinit $(BUILD_DIR)/
 	cp -r config $(BUILD_DIR)/
 
 # Build for current platform
 build-local:
-	go build -o $(BINARY_NAME) ./cmd/pvectgen
+	go build -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY_NAME) ./cmd/pvectgen
+
+# Build and install to /usr/local/bin (or INSTALL_DIR)
+install: build-local
+	@if [ -w "$(INSTALL_DIR)" ]; then \
+		mv $(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME); \
+	else \
+		echo "Installing to $(INSTALL_DIR) (requires sudo)..."; \
+		sudo mv $(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME); \
+	fi
+	@echo "Installed $(INSTALL_DIR)/$(BINARY_NAME) $(VERSION)"
 
 lint:
 	go vet ./...

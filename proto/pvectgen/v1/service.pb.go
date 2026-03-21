@@ -511,6 +511,9 @@ type LaunchVMRequest struct {
 	IpConfig      string                 `protobuf:"bytes,6,opt,name=ip_config,json=ipConfig,proto3" json:"ip_config,omitempty"`
 	Memory        int32                  `protobuf:"varint,7,opt,name=memory,proto3" json:"memory,omitempty"`
 	Cores         int32                  `protobuf:"varint,8,opt,name=cores,proto3" json:"cores,omitempty"`
+	Hostname      string                 `protobuf:"bytes,9,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Nameserver    string                 `protobuf:"bytes,10,opt,name=nameserver,proto3" json:"nameserver,omitempty"`
+	SearchDomain  string                 `protobuf:"bytes,11,opt,name=search_domain,json=searchDomain,proto3" json:"search_domain,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -599,6 +602,27 @@ func (x *LaunchVMRequest) GetCores() int32 {
 		return x.Cores
 	}
 	return 0
+}
+
+func (x *LaunchVMRequest) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *LaunchVMRequest) GetNameserver() string {
+	if x != nil {
+		return x.Nameserver
+	}
+	return ""
+}
+
+func (x *LaunchVMRequest) GetSearchDomain() string {
+	if x != nil {
+		return x.SearchDomain
+	}
+	return ""
 }
 
 type LaunchVMResponse struct {
@@ -841,7 +865,7 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x18\n" +
 	"\ahealthy\x18\x03 \x01(\bR\ahealthy\x12'\n" +
 	"\x0fproxmox_version\x18\x04 \x01(\tR\x0eproxmoxVersion\x12+\n" +
-	"\x11available_storage\x18\x05 \x03(\tR\x10availableStorage\"\xe7\x01\n" +
+	"\x11available_storage\x18\x05 \x03(\tR\x10availableStorage\"\xc8\x02\n" +
 	"\x0fLaunchVMRequest\x12\x1f\n" +
 	"\vtemplate_id\x18\x01 \x01(\x05R\n" +
 	"templateId\x12\x1a\n" +
@@ -851,7 +875,13 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	"\rstart_at_boot\x18\x05 \x01(\bR\vstartAtBoot\x12\x1b\n" +
 	"\tip_config\x18\x06 \x01(\tR\bipConfig\x12\x16\n" +
 	"\x06memory\x18\a \x01(\x05R\x06memory\x12\x14\n" +
-	"\x05cores\x18\b \x01(\x05R\x05cores\"[\n" +
+	"\x05cores\x18\b \x01(\x05R\x05cores\x12\x1a\n" +
+	"\bhostname\x18\t \x01(\tR\bhostname\x12\x1e\n" +
+	"\n" +
+	"nameserver\x18\n" +
+	" \x01(\tR\n" +
+	"nameserver\x12#\n" +
+	"\rsearch_domain\x18\v \x01(\tR\fsearchDomain\"[\n" +
 	"\x10LaunchVMResponse\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\x05R\x04vmId\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x18\n" +

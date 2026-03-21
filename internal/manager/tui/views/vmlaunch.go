@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -48,11 +49,14 @@ type vmLaunchResultMsg struct {
 const (
 	fldVMID = iota
 	fldName
+	fldHostname
 	fldMemory
 	fldCores
-	fldIPType  // select: dhcp / static
-	fldIPAddr  // only visible when static
-	fldGateway // only visible when static
+	fldIPType    // select: dhcp / static
+	fldIPAddr    // only visible when static
+	fldGateway   // only visible when static
+	fldNameserver
+	fldSearchDomain
 	fldStart
 	fldStartAtBoot
 	fldCount // sentinel
@@ -67,9 +71,10 @@ type vmField struct {
 
 // VMLaunchModel handles the VM launch flow.
 type VMLaunchModel struct {
-	db    *store.DB
-	nodes []models.Node
-	phase vmPhase
+	db      *store.DB
+	nodes   []models.Node
+	phase   vmPhase
+	spinner spinner.Model
 
 	nodeCursor      int
 	remoteTemplates []remoteTemplate
@@ -86,7 +91,12 @@ type VMLaunchModel struct {
 
 // NewVMLaunchModel creates a new VMLaunchModel.
 func NewVMLaunchModel(db *store.DB) VMLaunchModel {
-	m := VMLaunchModel{db: db}
+	s := spinner.New()
+	s.Spinner = spinner.Spinner{
+		Frames: []string{"-", "\\", "|", "/"},
+		FPS:    time.Second / 10,
+	}
+	m := VMLaunchModel{db: db, spinner: s}
 	m.initFields()
 	return m
 }
@@ -103,12 +113,15 @@ func (m *VMLaunchModel) initFields() {
 	m.fields = [fldCount]vmField{
 		fldVMID:       mk("VM ID", "e.g. 100", ""),
 		fldName:       mk("Name", "e.g. my-webserver", ""),
+		fldHostname:   mk("Hostname", "e.g. web-01 (optional)", ""),
 		fldMemory:     mk("Memory (MB)", "2048", "2048"),
 		fldCores:      mk("Cores", "2", "2"),
 		fldIPType:     {label: "IP Config", options: []string{"dhcp", "static"}, selIdx: 0},
-		fldIPAddr:     mk("IP Address", "e.g. 192.168.1.50/24", ""),
-		fldGateway:    mk("Gateway", "e.g. 192.168.1.1", ""),
-		fldStart:      {label: "Start after create", options: []string{"yes", "no"}, selIdx: 0},
+		fldIPAddr:      mk("IP Address", "e.g. 192.168.1.50/24", ""),
+		fldGateway:     mk("Gateway", "e.g. 192.168.1.1", ""),
+		fldNameserver:  mk("Nameserver", "e.g. 8.8.8.8 (optional)", ""),
+		fldSearchDomain: mk("Search Domain", "e.g. e412.in (optional)", ""),
+		fldStart:       {label: "Start after create", options: []string{"yes", "no"}, selIdx: 0},
 		fldStartAtBoot: {label: "Start at boot", options: []string{"no", "yes"}, selIdx: 0},
 	}
 }
@@ -143,9 +156,9 @@ func (m *VMLaunchModel) isStaticIP() bool {
 }
 
 func (m *VMLaunchModel) visibleFields() []int {
-	ids := []int{fldVMID, fldName, fldMemory, fldCores, fldIPType}
+	ids := []int{fldVMID, fldName, fldHostname, fldMemory, fldCores, fldIPType}
 	if m.isStaticIP() {
-		ids = append(ids, fldIPAddr, fldGateway)
+		ids = append(ids, fldIPAddr, fldGateway, fldNameserver, fldSearchDomain)
 	}
 	ids = append(ids, fldStart, fldStartAtBoot)
 	return ids
@@ -180,6 +193,15 @@ func (m VMLaunchModel) Update(msg tea.Msg) (VMLaunchModel, tea.Cmd) {
 		}
 		m.phase = vmPhaseResult
 		return m, nil
+	}
+
+	// Spinner ticks for loading phases
+	if m.phase == vmPhaseLoadTemplates || m.phase == vmPhaseLaunching {
+		if _, ok := msg.(spinner.TickMsg); ok {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 	}
 
 	switch m.phase {
@@ -218,7 +240,7 @@ func (m VMLaunchModel) updateNodeSelect(msg tea.Msg) (VMLaunchModel, tea.Cmd) {
 			m.selectedNode = &node
 			m.phase = vmPhaseLoadTemplates
 			m.statusMsg = ""
-			return m, m.fetchTemplatesCmd(node)
+			return m, tea.Batch(m.spinner.Tick, m.fetchTemplatesCmd(node))
 		}
 	}
 	return m, nil
@@ -353,6 +375,7 @@ func (m *VMLaunchModel) focusCurrent() {
 func (m VMLaunchModel) submitConfig() (VMLaunchModel, tea.Cmd) {
 	vmIDStr := m.fields[fldVMID].input.Value()
 	name := m.fields[fldName].input.Value()
+	hostname := m.fields[fldHostname].input.Value()
 	memStr := m.fields[fldMemory].input.Value()
 	coresStr := m.fields[fldCores].input.Value()
 	start := m.fields[fldStart].options[m.fields[fldStart].selIdx] == "yes"
@@ -391,10 +414,13 @@ func (m VMLaunchModel) submitConfig() (VMLaunchModel, tea.Cmd) {
 		}
 	}
 
+	nameserver := m.fields[fldNameserver].input.Value()
+	searchDomain := m.fields[fldSearchDomain].input.Value()
+
 	m.phase = vmPhaseLaunching
-	m.statusMsg = "Launching VM..."
-	return m, m.launchVMCmd(m.selectedTmpl.vmID, int32(newVMID), name,
-		int32(memory), int32(cores), ipConfig, start, startAtBoot)
+	m.statusMsg = ""
+	return m, tea.Batch(m.spinner.Tick, m.launchVMCmd(m.selectedTmpl.vmID, int32(newVMID), name,
+		hostname, int32(memory), int32(cores), ipConfig, nameserver, searchDomain, start, startAtBoot))
 }
 
 func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
@@ -418,7 +444,7 @@ func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
 	}
 }
 
-func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name string, memory, cores int32, ipConfig string, start, startAtBoot bool) tea.Cmd {
+func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname string, memory, cores int32, ipConfig, nameserver, searchDomain string, start, startAtBoot bool) tea.Cmd {
 	node := m.selectedNode
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -429,9 +455,17 @@ func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name string, memor
 		}
 		defer client.Close()
 		resp, err := client.LaunchVM(ctx, &pb.LaunchVMRequest{
-			TemplateId: templateID, NewVmId: newVMID, Name: name,
-			Start: start, StartAtBoot: startAtBoot, IpConfig: ipConfig,
-			Memory: memory, Cores: cores,
+			TemplateId:   templateID,
+			NewVmId:      newVMID,
+			Name:         name,
+			Hostname:     hostname,
+			Start:        start,
+			StartAtBoot:  startAtBoot,
+			IpConfig:     ipConfig,
+			Memory:       memory,
+			Cores:        cores,
+			Nameserver:   nameserver,
+			SearchDomain: searchDomain,
 		})
 		return vmLaunchResultMsg{resp: resp, err: err}
 	}
@@ -468,7 +502,7 @@ func (m VMLaunchModel) View() string {
 		}
 
 	case vmPhaseLoadTemplates:
-		b.WriteString(styles.WarningStyle.Render("  Loading templates from ") + m.selectedNode.Label() + "...")
+		fmt.Fprintf(&b, "  %s Loading templates from %s", m.spinner.View(), m.selectedNode.Label())
 
 	case vmPhaseTmplSelect:
 		fmt.Fprintf(&b, "  Node: %s — Select a template:\n\n", styles.SelectedStyle.Render(m.selectedNode.Label()))
@@ -533,7 +567,7 @@ func (m VMLaunchModel) View() string {
 		}
 
 	case vmPhaseLaunching:
-		b.WriteString(styles.WarningStyle.Render("  Launching VM..."))
+		fmt.Fprintf(&b, "  %s Launching VM...", m.spinner.View())
 
 	case vmPhaseResult:
 		if strings.Contains(m.statusMsg, "created") {

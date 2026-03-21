@@ -6,27 +6,33 @@ import (
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 )
 
-// StatusBar renders a bottom status bar.
+// StatusBar renders a bottom status bar with breadcrumb + help keys.
 type StatusBar struct {
-	Width     int
-	LeftText  string
-	RightText string
+	Width      int
+	Breadcrumb string // e.g. "Home > Nodes"
+	HelpKeys   string // rendered help entries
+	RightText  string // e.g. build status indicator
 }
 
 // View renders the status bar.
 func (s StatusBar) View() string {
-	left := styles.StatusBarStyle.Render(s.LeftText)
-	right := styles.StatusBarStyle.Render(s.RightText)
+	bar := lipgloss.NewStyle().
+		Width(s.Width).
+		Background(lipgloss.Color("#1C1C1C")).
+		Padding(0, 1)
 
-	gap := s.Width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 0 {
-		gap = 0
+	left := styles.AccentStyle.Render(s.Breadcrumb)
+	right := s.RightText
+
+	helpWidth := s.Width - lipgloss.Width(left) - lipgloss.Width(right) - 4
+	help := ""
+	if helpWidth > 10 {
+		help = lipgloss.NewStyle().
+			Width(helpWidth).
+			Align(lipgloss.Center).
+			Render(s.HelpKeys)
 	}
 
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		left,
-		lipgloss.NewStyle().Width(gap).Render(""),
-		right,
-	)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, left, help, right)
+	return bar.Render(content)
 }

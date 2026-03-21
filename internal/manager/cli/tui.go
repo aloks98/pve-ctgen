@@ -16,7 +16,7 @@ func newTUICmd() *cobra.Command {
 			}
 			defer db.Close()
 
-			return tui.Run(db)
+			return tui.Run(db, Version)
 		},
 	}
 }

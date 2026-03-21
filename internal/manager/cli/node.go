@@ -48,9 +48,9 @@ func newNodeListCmd() *cobra.Command {
 			}
 
 			w := newTabWriter()
-			fmt.Fprintln(w, "NAME\tDISPLAY NAME\tADDRESS\tADDED")
+			fmt.Fprintln(w, "NAME\tDISPLAY NAME\tADDRESS")
 			for _, n := range nodes {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", n.Name, n.DisplayName, n.Address, n.CreatedAt.Format("2006-01-02"))
+				fmt.Fprintf(w, "%s\t%s\t%s\n", n.Name, n.DisplayName, n.Address)
 			}
 			return w.Flush()
 		},

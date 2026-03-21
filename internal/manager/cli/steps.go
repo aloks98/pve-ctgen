@@ -47,12 +47,12 @@ func newStepsListCmd() *cobra.Command {
 
 			w := newTabWriter()
 			fmt.Fprintln(w, "#\tNAME\tCOMMAND")
-			for _, s := range steps {
+			for i, s := range steps {
 				command := s.Command
 				if len(command) > 60 {
 					command = command[:57] + "..."
 				}
-				fmt.Fprintf(w, "%d\t%s\t%s\n", s.SortOrder, s.Name, command)
+				fmt.Fprintf(w, "%d\t%s\t%s\n", i+1, s.Name, command)
 			}
 			return w.Flush()
 		},

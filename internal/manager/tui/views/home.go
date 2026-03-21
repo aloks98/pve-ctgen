@@ -5,36 +5,65 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
+	"github.com/aloks98/pve-ctgen/internal/manager/store"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 )
 
+const logo = `▗▄▄▖ ▗▖  ▗▖▗▄▄▄▖     ▗▄▄▖▗▄▄▄▖▗▄▄▖▗▄▄▄▖▗▖  ▗▖
+▐▌ ▐▌▐▌  ▐▌▐▌       ▐▌     █ ▐▌   ▐▌   ▐▛▚▖▐▌
+▐▛▀▘ ▐▌  ▐▌▐▛▀▀▘    ▐▌     █ ▐▌▝▜▌▐▛▀▀▘▐▌ ▝▜▌
+▐▌    ▝▚▞▘ ▐▙▄▄▖    ▝▚▄▄▖  █ ▝▚▄▞▘▐▙▄▄▖▐▌  ▐▌`
+
 type menuItem struct {
+	key   string
 	label string
 	desc  string
-	view  int // maps to tui.View constants
+	view  int
 }
 
 var menuItems = []menuItem{
-	{"Nodes", "Manage Proxmox nodes (Minions)", 8},
-	{"Cloud-Init Store", "Manage cloud-init configurations", 1},
-	{"Template Store", "Manage VM template definitions", 2},
-	{"Build Steps", "Manage build step commands", 3},
-	{"Build History", "View past build results", 4},
-	{"New Build", "Select templates and trigger a build", 5},
-	{"Launch VM", "Clone a template and start a VM", 7},
+	{"1", "Nodes", "Manage Proxmox nodes", 8},
+	{"2", "Cloud-Init", "Cloud-init configurations", 1},
+	{"3", "Templates", "VM template definitions", 2},
+	{"4", "Steps", "Build step commands", 3},
+	{"5", "History", "Past build results", 4},
+	{"6", "Build", "Start a new build", 5},
+	{"7", "Launch VM", "Clone and launch a VM", 7},
 }
 
-// HomeModel is the main menu.
+const viewBuildProgressID = 6
+
+// HomeModel is the main dashboard.
 type HomeModel struct {
-	cursor    int
-	navTarget int
-	hasNav    bool
+	cursor        int
+	navTarget     int
+	hasNav        bool
+	BuildRunning  bool
+	Version       string
+	db            *store.DB
+	nodeCount     int
+	templateCount int
+	buildCount    int
 }
 
 // NewHomeModel creates a new HomeModel.
-func NewHomeModel() HomeModel {
-	return HomeModel{}
+func NewHomeModel(db *store.DB, version string) HomeModel {
+	return HomeModel{db: db, Version: version}
+}
+
+// Refresh loads stats from DB.
+func (m *HomeModel) Refresh() {
+	if m.db == nil {
+		return
+	}
+	nodes, _ := m.db.ListNodes()
+	m.nodeCount = len(nodes)
+	templates, _ := m.db.ListTemplates()
+	m.templateCount = len(templates)
+	builds, _ := m.db.ListBuilds("", "", "", 0)
+	m.buildCount = len(builds)
 }
 
 // Navigate returns the target view if navigation was triggered.
@@ -50,43 +79,89 @@ func (m *HomeModel) ResetNavigate() {
 // Update handles key events.
 func (m HomeModel) Update(msg tea.Msg) (HomeModel, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
+		items := m.menuItems()
 		switch km.String() {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(menuItems)-1 {
+			if m.cursor < len(items)-1 {
 				m.cursor++
 			}
 		case "enter":
-			m.navTarget = menuItems[m.cursor].view
-			m.hasNav = true
+			if m.cursor < len(items) {
+				m.navTarget = items[m.cursor].view
+				m.hasNav = true
+			}
+		case "1", "2", "3", "4", "5", "6", "7":
+			idx := int(km.String()[0] - '1')
+			offset := 0
+			if m.BuildRunning {
+				offset = 1
+			}
+			actual := idx - offset
+			if actual >= 0 && actual < len(menuItems) {
+				m.navTarget = menuItems[actual].view
+				m.hasNav = true
+			}
 		}
 	}
 	return m, nil
 }
 
-// View renders the home menu.
+func (m HomeModel) menuItems() []menuItem {
+	if m.BuildRunning {
+		return append([]menuItem{{"0", "Build Progress", "View running build", viewBuildProgressID}}, menuItems...)
+	}
+	return menuItems
+}
+
+// View renders the home dashboard.
 func (m HomeModel) View() string {
 	var b strings.Builder
 
+	// ASCII art header
+	logoStyle := lipgloss.NewStyle().Foreground(styles.Primary).Bold(true)
+	b.WriteString(logoStyle.Render(logo))
+	b.WriteString("  ")
+	b.WriteString(styles.DimStyle.Render(m.Version))
 	b.WriteString("\n")
-	b.WriteString(styles.MutedStyle.Render("  Proxmox VE Cloud-Init Template Generator"))
+	b.WriteString(styles.DimStyle.Render("  Proxmox VE Cloud-Init Template Generator"))
 	b.WriteString("\n\n")
 
-	for i, item := range menuItems {
-		cursor := "  "
+	// Stats row
+	stat := func(label string, count int) string {
+		return styles.AccentStyle.Render(label) + " " + styles.BoldStyle.Render(fmt.Sprintf("%d", count))
+	}
+	b.WriteString(fmt.Sprintf(" %s    %s    %s",
+		stat("nodes", m.nodeCount),
+		stat("templates", m.templateCount),
+		stat("builds", m.buildCount),
+	))
+	b.WriteString("\n\n")
+
+	// Build running indicator
+	if m.BuildRunning {
+		b.WriteString(" " + styles.WarningStyle.Render("[..] Build running in background") + "\n\n")
+	}
+
+	// Menu
+	items := m.menuItems()
+	for i, item := range items {
+		cursor := " "
 		if i == m.cursor {
-			cursor = styles.SelectedStyle.Render("> ")
+			cursor = styles.SelectedStyle.Render(">")
 		}
 
-		label := item.label
+		key := styles.DimStyle.Render("[" + item.key + "]")
+		label := styles.MenuItemStyle.Render(item.label)
 		if i == m.cursor {
-			label = styles.SelectedStyle.Render(label)
+			label = styles.SelectedStyle.Render(item.label)
 		}
+		desc := styles.MenuDescStyle.Render(item.desc)
 
-		b.WriteString(fmt.Sprintf("%s%-20s  %s\n", cursor, label, styles.MutedStyle.Render(item.desc)))
+		fmt.Fprintf(&b, " %s %s %-16s %s\n", cursor, key, label, desc)
 	}
 
 	return b.String()

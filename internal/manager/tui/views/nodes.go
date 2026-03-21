@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
@@ -49,8 +50,8 @@ type NodesModel struct {
 // NewNodesModel creates a new NodesModel.
 func NewNodesModel(db *store.DB) NodesModel {
 	t := components.NewTable(
-		[]string{"NAME", "DISPLAY NAME", "ADDRESS", "ADDED"},
-		[]int{18, 18, 22, 12},
+		[]string{"NAME", "DISPLAY NAME", "ADDRESS"},
+		[]int{18, 18, 30},
 	)
 	return NodesModel{table: t, db: db}
 }
@@ -72,11 +73,16 @@ func (m *NodesModel) Refresh() {
 	m.nodes = nodes
 	rows := make([][]string, len(nodes))
 	for i, n := range nodes {
-		rows[i] = []string{n.Name, n.DisplayName, n.Address, n.CreatedAt.Format("2006-01-02")}
+		rows[i] = []string{n.Name, n.DisplayName, n.Address}
 	}
 	m.table.SetRows(rows)
 	m.mode = nodesModeList
 	m.statusMsg = ""
+}
+
+// NodeCount returns the list of nodes (for status display).
+func (m *NodesModel) NodeCount() []models.Node {
+	return m.nodes
 }
 
 // InSubView returns true if the view is in a sub-mode.

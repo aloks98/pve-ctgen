@@ -3,7 +3,9 @@ package views
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -17,7 +19,7 @@ type BuildEventMsg struct {
 	Event *pb.BuildEvent
 }
 
-// BuildDoneMsg signals that the build stream has ended.
+// BuildDoneMsg signals that the event channel has been closed (all builds finished).
 type BuildDoneMsg struct{}
 
 type stepStatus struct {
@@ -26,27 +28,38 @@ type stepStatus struct {
 }
 
 type imageStatus struct {
-	name   string
-	status string
-	steps  []stepStatus
+	name      string
+	status    string
+	steps     []stepStatus
+	collapsed bool
 }
 
 // BuildProgressModel shows live build progress.
 type BuildProgressModel struct {
-	images      []imageStatus
-	logViewer   components.LogViewer
-	events      <-chan *pb.BuildEvent
-	currentStep string
-	currentCmd  string
-	Done        bool
-	width       int
-	height      int
+	images       []imageStatus
+	logViewer    components.LogViewer
+	events       <-chan *pb.BuildEvent
+	spinner      spinner.Model
+	currentStep  string
+	currentCmd   string
+	Done         bool
+	Backgrounded bool
+	succeeded    int
+	failed       int
+	width        int
+	height       int
 }
 
 // NewBuildProgressModel creates a new BuildProgressModel.
 func NewBuildProgressModel() BuildProgressModel {
+	s := spinner.New()
+	s.Spinner = spinner.Spinner{
+		Frames: []string{"-", "\\", "|", "/"},
+		FPS:    time.Second / 10,
+	}
 	return BuildProgressModel{
 		logViewer: components.NewLogViewer("Build Output"),
+		spinner:   s,
 	}
 }
 
@@ -64,15 +77,23 @@ func (m *BuildProgressModel) Reset(events <-chan *pb.BuildEvent) {
 	m.currentStep = ""
 	m.currentCmd = ""
 	m.Done = false
+	m.Backgrounded = false
+	m.succeeded = 0
+	m.failed = 0
 	m.logViewer.Clear()
 }
 
-// Init returns a command to start listening for events.
+// Running returns true if a build is in progress (not done, has events channel).
+func (m *BuildProgressModel) Running() bool {
+	return m.events != nil && !m.Done
+}
+
+// Init returns a command to start listening for events and the spinner.
 func (m *BuildProgressModel) Init() tea.Cmd {
 	if m.events == nil {
 		return nil
 	}
-	return listenForEvent(m.events)
+	return tea.Batch(listenForEvent(m.events), m.spinner.Tick)
 }
 
 func listenForEvent(events <-chan *pb.BuildEvent) tea.Cmd {
@@ -94,9 +115,15 @@ func (m BuildProgressModel) Update(msg tea.Msg) (BuildProgressModel, tea.Cmd) {
 		case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_STARTED:
 			m.currentStep = e.StepName
 			m.currentCmd = ""
-			// Find or create image entry
 			if len(m.images) == 0 || m.images[len(m.images)-1].status == "completed" || m.images[len(m.images)-1].status == "failed" {
-				m.images = append(m.images, imageStatus{name: "Build", status: "running"})
+				name := e.StepName
+				if e.BuildId != "" && len(e.BuildId) >= 8 {
+					name = fmt.Sprintf("Build %s", e.BuildId[:8])
+				}
+				m.images = append(m.images, imageStatus{name: name, status: "running"})
+				// Clear log for the new build
+				m.logViewer.Clear()
+				m.logViewer.AppendLine(fmt.Sprintf("--- %s ---", name))
 			}
 			img := &m.images[len(m.images)-1]
 			img.steps = append(img.steps, stepStatus{name: e.StepName, status: "running"})
@@ -116,29 +143,44 @@ func (m BuildProgressModel) Update(msg tea.Msg) (BuildProgressModel, tea.Cmd) {
 
 		case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_COMPLETED:
 			if len(m.images) > 0 {
-				m.images[len(m.images)-1].status = "completed"
+				last := &m.images[len(m.images)-1]
+				last.status = "completed"
+				last.collapsed = true
 			}
-			m.Done = true
+			m.succeeded++
+			m.currentStep = ""
 			m.currentCmd = ""
 
 		case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED:
 			if len(m.images) > 0 {
-				m.images[len(m.images)-1].status = "failed"
+				last := &m.images[len(m.images)-1]
+				last.status = "failed"
+				last.collapsed = true
 			}
+			m.failed++
 			m.logViewer.AppendLine(fmt.Sprintf("BUILD FAILED: %s", e.Message))
-			m.Done = true
+			m.currentStep = ""
 			m.currentCmd = ""
 		}
 
-		// Keep listening for more events
-		if !m.Done && m.events != nil {
+		// Always keep listening — channel close triggers BuildDoneMsg
+		if m.events != nil {
 			return m, listenForEvent(m.events)
 		}
 		return m, nil
 
 	case BuildDoneMsg:
 		m.Done = true
+		m.Backgrounded = false
+		m.logViewer.Clear()
 		return m, nil
+
+	case spinner.TickMsg:
+		if !m.Done {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 
 	case tea.KeyMsg:
 		m.logViewer.Update(msg)
@@ -174,13 +216,25 @@ func (m BuildProgressModel) View() string {
 	left.WriteString("\n")
 	if len(m.images) == 0 {
 		left.WriteString("\n")
-		left.WriteString(styles.MutedStyle.Render("  Waiting for build to start..."))
+		fmt.Fprintf(&left, "  %s Waiting for build to start...", m.spinner.View())
 	}
 	for _, img := range m.images {
-		fmt.Fprintf(&left, "\n  %s %s\n", styles.StatusIcon(img.status), img.name)
-		for _, step := range img.steps {
-			fmt.Fprintf(&left, "    %s %s\n", styles.StatusIcon(step.status), step.name)
+		fmt.Fprintf(&left, "\n  %s %s", styles.StatusTag(img.status), img.name)
+		if img.collapsed {
+			left.WriteString("\n")
+			continue
 		}
+		left.WriteString("\n")
+		for _, step := range img.steps {
+			fmt.Fprintf(&left, "    %s %s\n", styles.StatusTag(step.status), step.name)
+		}
+	}
+
+	// Progress counter
+	total := len(m.images)
+	done := m.succeeded + m.failed
+	if total > 0 && !m.Done {
+		fmt.Fprintf(&left, "\n  %s\n", styles.MutedStyle.Render(fmt.Sprintf("  %d/%d complete", done, total)))
 	}
 
 	leftPanel := lipgloss.NewStyle().Width(leftWidth).Render(left.String())
@@ -191,6 +245,8 @@ func (m BuildProgressModel) View() string {
 	right.WriteString("\n")
 	if m.currentStep != "" {
 		fmt.Fprintf(&right, "  %s\n", m.currentStep)
+	} else if m.Done {
+		right.WriteString(styles.MutedStyle.Render("  All builds finished\n"))
 	} else {
 		right.WriteString(styles.MutedStyle.Render("  —\n"))
 	}
@@ -208,7 +264,15 @@ func (m BuildProgressModel) View() string {
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 
 	if m.Done {
-		content += "\n\n" + styles.MutedStyle.Render("  Build finished. Press esc to go back.")
+		summary := fmt.Sprintf("  %d succeeded, %d failed.", m.succeeded, m.failed)
+		if m.failed == 0 {
+			summary = styles.SuccessStyle.Render(summary)
+		} else {
+			summary = styles.ErrorStyle.Render(summary)
+		}
+		content += "\n\n" + summary + "  " + styles.MutedStyle.Render("Press esc to go back.")
+	} else {
+		content += "\n\n" + styles.MutedStyle.Render("  esc: send to background")
 	}
 
 	return content

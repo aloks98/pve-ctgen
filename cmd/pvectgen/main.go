@@ -8,6 +8,7 @@ import (
 
 	managercli "github.com/aloks98/pve-ctgen/internal/manager/cli"
 	minioncli "github.com/aloks98/pve-ctgen/internal/minion/cli"
+	"github.com/aloks98/pve-ctgen/internal/update"
 )
 
 var version = "dev"
@@ -22,6 +23,7 @@ func main() {
 		},
 	}
 
+	managercli.Version = version
 	rootCmd.AddCommand(managercli.NewManagerCmd())
 	rootCmd.AddCommand(minioncli.NewMinionCmd())
 	rootCmd.AddCommand(&cobra.Command{
@@ -29,6 +31,19 @@ func main() {
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("pvectgen %s\n", version)
+			latest, err := update.CheckLatest()
+			if err == nil && update.NeedsUpdate(version, latest) {
+				fmt.Printf("Update available: %s -> %s\n", version, latest)
+				fmt.Println("Run 'pvectgen update' to update.")
+			}
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "update",
+		Short: "Update pvectgen to the latest version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return update.SelfUpdate(version)
 		},
 	})
 

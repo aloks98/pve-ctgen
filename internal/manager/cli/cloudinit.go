@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/aloks98/pve-ctgen/internal/shared/cloudinit"
+	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
 	"github.com/spf13/cobra"
 )
 
@@ -141,10 +142,7 @@ func newCloudInitEditCmd() *cobra.Command {
 			}
 			tmpFile.Close()
 
-			editor := os.Getenv("EDITOR")
-			if editor == "" {
-				editor = "nvim"
-			}
+			editor := fileutil.Editor()
 			editorCmd := exec.Command(editor, tmpFile.Name())
 			editorCmd.Stdin = os.Stdin
 			editorCmd.Stdout = os.Stdout

@@ -10,7 +10,7 @@ import (
 
 // Config holds the Manager configuration.
 type Config struct {
-	DBPath      string `yaml:"db_path"`
+	DataDir     string `yaml:"data_dir"`
 	DefaultNode string `yaml:"default_node"`
 }
 
@@ -18,7 +18,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
-		DBPath:      filepath.Join(home, ".config", "pvectgen", "pvectgen.db"),
+		DataDir:     filepath.Join(home, ".config", "pvectgen"),
 		DefaultNode: "",
 	}
 }
@@ -45,9 +45,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Expand ~
-	if len(cfg.DBPath) > 0 && cfg.DBPath[0] == '~' {
+	if len(cfg.DataDir) > 0 && cfg.DataDir[0] == '~' {
 		home, _ := os.UserHomeDir()
-		cfg.DBPath = filepath.Join(home, cfg.DBPath[1:])
+		cfg.DataDir = filepath.Join(home, cfg.DataDir[1:])
 	}
 
 	return cfg, nil

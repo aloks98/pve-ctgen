@@ -3,87 +3,136 @@ package styles
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Colors
-	Primary   = lipgloss.Color("#7C3AED")
-	Secondary = lipgloss.Color("#06B6D4")
-	Success   = lipgloss.Color("#22C55E")
-	Warning   = lipgloss.Color("#EAB308")
-	Error     = lipgloss.Color("#EF4444")
-	Muted     = lipgloss.Color("#6B7280")
-	BgDark    = lipgloss.Color("#1F2937")
-	BgPanel   = lipgloss.Color("#111827")
-	White     = lipgloss.Color("#F9FAFB")
+	// Colors — muted palette, btop-inspired
+	Primary    = lipgloss.Color("#5F87FF") // soft blue
+	Accent     = lipgloss.Color("#87D7AF") // teal-green
+	Highlight  = lipgloss.Color("#FFD787") // warm yellow
+	Success    = lipgloss.Color("#87D787") // green
+	Error      = lipgloss.Color("#FF8787") // red
+	Warning    = lipgloss.Color("#FFD787") // yellow
+	Muted      = lipgloss.Color("#585858") // dark gray
+	Dim        = lipgloss.Color("#808080") // medium gray
+	White      = lipgloss.Color("#E4E4E4") // off-white
+	BgSelected = lipgloss.Color("#303030") // subtle bg highlight
 
-	// Title bar
+	// Title bar — full width, inverted
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(White).
+			Foreground(lipgloss.Color("#1C1C1C")).
 			Background(Primary).
 			Padding(0, 1)
+
+	// Section headers inside panels
+	SectionStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(Accent).
+			BorderBottom(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(Muted)
 
 	// Active/selected items
 	SelectedStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(Primary)
 
-	// Status indicators
+	// Status text styles
 	SuccessStyle = lipgloss.NewStyle().Foreground(Success)
 	WarningStyle = lipgloss.NewStyle().Foreground(Warning)
 	ErrorStyle   = lipgloss.NewStyle().Foreground(Error)
 	MutedStyle   = lipgloss.NewStyle().Foreground(Muted)
+	DimStyle     = lipgloss.NewStyle().Foreground(Dim)
+	BoldStyle    = lipgloss.NewStyle().Bold(true).Foreground(White)
+	AccentStyle  = lipgloss.NewStyle().Foreground(Accent)
 
-	// Panels
+	// Bordered panel
 	PanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(Muted).
-			Padding(1, 2)
+			Padding(0, 1)
 
 	ActivePanelStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(Primary).
-				Padding(1, 2)
+				Padding(0, 1)
 
-	// Status bar
+	// Status bar — bottom of screen
 	StatusBarStyle = lipgloss.NewStyle().
-			Foreground(Muted).
-			Padding(0, 1)
+			Foreground(Dim)
 
-	// Help text
-	HelpStyle = lipgloss.NewStyle().
-			Foreground(Muted)
+	StatusBarKeyStyle = lipgloss.NewStyle().
+				Foreground(White).
+				Bold(true)
+
+	StatusBarDescStyle = lipgloss.NewStyle().
+				Foreground(Dim)
 
 	// Table header
 	TableHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(Secondary).
-				BorderBottom(true).
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(Muted)
+				Foreground(Accent)
 
 	// Table row
-	TableRowStyle = lipgloss.NewStyle()
+	TableRowStyle = lipgloss.NewStyle().
+			Foreground(White)
 
 	// Table selected row
 	TableSelectedRowStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(White).
-				Background(Primary)
+				Foreground(Primary).
+				Background(BgSelected)
+
+	// Menu item (not selected)
+	MenuItemStyle = lipgloss.NewStyle().
+			Foreground(White)
+
+	// Menu item description
+	MenuDescStyle = lipgloss.NewStyle().
+			Foreground(Dim)
 )
 
-// StatusIcon returns the appropriate icon for a build status.
-func StatusIcon(status string) string {
+// StatusTag returns a fixed-width ASCII status tag.
+func StatusTag(status string) string {
 	switch status {
 	case "pending":
-		return MutedStyle.Render("○")
+		return MutedStyle.Render("[  ]")
 	case "running":
-		return WarningStyle.Render("◉")
+		return WarningStyle.Render("[..]")
 	case "completed":
-		return SuccessStyle.Render("✓")
+		return SuccessStyle.Render("[OK]")
 	case "failed":
-		return ErrorStyle.Render("✗")
+		return ErrorStyle.Render("[!!]")
 	case "skipped":
-		return MutedStyle.Render("–")
+		return MutedStyle.Render("[--]")
 	default:
-		return MutedStyle.Render("?")
+		return MutedStyle.Render("[??]")
 	}
+}
+
+// Key renders a keyboard shortcut in the help bar style.
+func Key(k string) string {
+	return StatusBarKeyStyle.Render(k)
+}
+
+// HelpEntry renders a "key:description" pair for the help bar.
+func HelpEntry(key, desc string) string {
+	return Key(key) + StatusBarDescStyle.Render(":"+desc)
+}
+
+// HelpBar renders a full help bar from key-description pairs.
+func HelpBar(entries ...string) string {
+	return lipgloss.JoinHorizontal(lipgloss.Top, interleave(entries, "  ")...)
+}
+
+func interleave(items []string, sep string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(items)*2-1)
+	for i, item := range items {
+		if i > 0 {
+			result = append(result, StatusBarDescStyle.Render(sep))
+		}
+		result = append(result, item)
+	}
+	return result
 }

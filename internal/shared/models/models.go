@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// Image represents a cloud image to be processed.
+// Image represents a cloud image to be processed (from os_list.json seed data).
 type Image struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -12,7 +12,7 @@ type Image struct {
 	Vendor      string `json:"vendor"`
 }
 
-// Step represents a command to be executed.
+// Step represents a command to be executed (from steps.json seed data).
 type Step struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
@@ -20,45 +20,34 @@ type Step struct {
 
 // CloudInitConfig represents a stored cloud-init configuration.
 type CloudInitConfig struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Name      string    `yaml:"-" json:"name"`           // derived from filename
+	Content   string    `yaml:"-" json:"content"`        // file contents
+	CreatedAt time.Time `yaml:"-" json:"created_at"`
+	UpdatedAt time.Time `yaml:"-" json:"updated_at"`
 }
 
 // Template represents a VM template definition.
 type Template struct {
-	ID          int64     `json:"id"`
-	VMID        int       `json:"vm_id"`
-	Name        string    `json:"name"`
-	URL         string    `json:"url"`
-	ChecksumURL string    `json:"checksum_url"`
-	Tags        string    `json:"tags"`
-	CloudInitID *int64    `json:"cloudinit_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	VMID        int    `yaml:"vm_id" json:"vm_id"`
+	Name        string `yaml:"name" json:"name"`
+	URL         string `yaml:"url" json:"url"`
+	ChecksumURL string `yaml:"checksum_url,omitempty" json:"checksum_url"`
+	Tags        string `yaml:"tags,omitempty" json:"tags"`
+	CloudInit   string `yaml:"cloudinit,omitempty" json:"cloudinit"` // cloud-init filename
 }
 
 // BuildStep represents a build step definition.
 type BuildStep struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Command   string    `json:"command"`
-	SortOrder int       `json:"sort_order"`
-	IsDefault bool      `json:"is_default"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Name    string `yaml:"name" json:"name"`
+	Command string `yaml:"command" json:"command"`
 }
 
 // Node represents a Proxmox node (Minion).
 type Node struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`         // Proxmox hostname (from minion)
-	DisplayName string    `json:"display_name"`  // User-friendly label (set by manager)
-	Address     string    `json:"address"`
-	APIKey      string    `json:"api_key"`
-	CreatedAt   time.Time `json:"created_at"`
+	Name        string `yaml:"name" json:"name"`
+	DisplayName string `yaml:"display_name,omitempty" json:"display_name"`
+	Address     string `yaml:"address" json:"address"`
+	APIKey      string `yaml:"api_key" json:"api_key"`
 }
 
 // Label returns DisplayName if set, otherwise Name.
@@ -71,23 +60,21 @@ func (n Node) Label() string {
 
 // Build represents a build execution record.
 type Build struct {
-	ID          int64      `json:"id"`
-	BuildID     string     `json:"build_id"`
-	TemplateID  int64      `json:"template_id"`
-	NodeID      int64      `json:"node_id"`
-	Status      string     `json:"status"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	BuildID     string          `yaml:"build_id" json:"build_id"`
+	Template    string          `yaml:"template" json:"template"`
+	Node        string          `yaml:"node" json:"node"`
+	Status      string          `yaml:"status" json:"status"`
+	StartedAt   *time.Time      `yaml:"started_at,omitempty" json:"started_at,omitempty"`
+	CompletedAt *time.Time      `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+	Steps       []BuildStepResult `yaml:"steps,omitempty" json:"steps,omitempty"`
 }
 
 // BuildStepResult represents the result of a single build step.
 type BuildStepResult struct {
-	ID          int64      `json:"id"`
-	BuildID     string     `json:"build_id"`
-	StepName    string     `json:"step_name"`
-	StepIndex   int        `json:"step_index"`
-	Status      string     `json:"status"`
-	Log         string     `json:"log"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	StepName    string     `yaml:"step_name" json:"step_name"`
+	StepIndex   int        `yaml:"step_index" json:"step_index"`
+	Status      string     `yaml:"status" json:"status"`
+	Log         string     `yaml:"log,omitempty" json:"log,omitempty"`
+	StartedAt   *time.Time `yaml:"started_at,omitempty" json:"started_at,omitempty"`
+	CompletedAt *time.Time `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
 }

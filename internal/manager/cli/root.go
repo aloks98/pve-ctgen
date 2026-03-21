@@ -12,6 +12,9 @@ import (
 
 var (
 	cfgPath string
+
+	// Version is set by main.go at startup.
+	Version string
 )
 
 // NewManagerCmd creates the manager command group.
@@ -45,7 +48,7 @@ func openStore() (*store.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	db, err := store.Open(cfg.DBPath)
+	db, err := store.Open(cfg.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

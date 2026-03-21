@@ -53,7 +53,6 @@ func newBuildRunCmd() *cobra.Command {
 
 			// Get templates
 			var templates []struct {
-				id   int64
 				vmID int
 				name string
 				url  string
@@ -70,7 +69,6 @@ func newBuildRunCmd() *cobra.Command {
 				}
 				for _, t := range allTemplates {
 					entry := struct {
-						id   int64
 						vmID int
 						name string
 						url  string
@@ -78,9 +76,9 @@ func newBuildRunCmd() *cobra.Command {
 						tags string
 						ciContent []byte
 						ciFilename string
-					}{t.ID, t.VMID, t.Name, t.URL, t.ChecksumURL, t.Tags, nil, ""}
-					if t.CloudInitID != nil {
-						ci, err := db.GetCloudInitByID(*t.CloudInitID)
+					}{t.VMID, t.Name, t.URL, t.ChecksumURL, t.Tags, nil, ""}
+					if t.CloudInit != "" {
+						ci, err := db.GetCloudInitByID(t.CloudInit)
 						if err == nil {
 							entry.ciContent = []byte(ci.Content)
 							entry.ciFilename = ci.Name
@@ -95,7 +93,6 @@ func newBuildRunCmd() *cobra.Command {
 						return fmt.Errorf("template %q: %w", name, err)
 					}
 					entry := struct {
-						id   int64
 						vmID int
 						name string
 						url  string
@@ -103,9 +100,9 @@ func newBuildRunCmd() *cobra.Command {
 						tags string
 						ciContent []byte
 						ciFilename string
-					}{t.ID, t.VMID, t.Name, t.URL, t.ChecksumURL, t.Tags, nil, ""}
-					if t.CloudInitID != nil {
-						ci, err := db.GetCloudInitByID(*t.CloudInitID)
+					}{t.VMID, t.Name, t.URL, t.ChecksumURL, t.Tags, nil, ""}
+					if t.CloudInit != "" {
+						ci, err := db.GetCloudInitByID(t.CloudInit)
 						if err == nil {
 							entry.ciContent = []byte(ci.Content)
 							entry.ciFilename = ci.Name
@@ -140,7 +137,7 @@ func newBuildRunCmd() *cobra.Command {
 			for _, t := range templates {
 				buildID := uuid.New().String()
 
-				if _, err := db.CreateBuild(buildID, t.id, node.ID); err != nil {
+				if _, err := db.CreateBuild(buildID, t.name, node.Name); err != nil {
 					fmt.Fprintf(os.Stderr, "Failed to record build for %s: %v\n", t.name, err)
 					continue
 				}

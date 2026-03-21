@@ -63,11 +63,8 @@ func (m *TemplatesModel) Refresh() {
 	m.names = make([]string, len(templates))
 	for i, t := range templates {
 		ciName := "-"
-		if t.CloudInitID != nil {
-			ci, err := m.db.GetCloudInitByID(*t.CloudInitID)
-			if err == nil {
-				ciName = ci.Name
-			}
+		if t.CloudInit != "" {
+			ciName = t.CloudInit
 		}
 		rows[i] = []string{
 			fmt.Sprintf("%d", t.VMID),
@@ -136,11 +133,8 @@ func (m TemplatesModel) Update(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 					m.form.SetValue("URL", t.URL)
 					m.form.SetValue("Checksum URL", t.ChecksumURL)
 					m.form.SetValue("Tags", t.Tags)
-					if t.CloudInitID != nil {
-						ci, err := m.db.GetCloudInitByID(*t.CloudInitID)
-						if err == nil {
-							m.form.SetValue("CloudInit", ci.Name)
-						}
+					if t.CloudInit != "" {
+						m.form.SetValue("CloudInit", t.CloudInit)
 					}
 					m.mode = tmplModeEdit
 					return m, m.form.Fields[0].BlinkCmd()
@@ -157,14 +151,9 @@ func (m TemplatesModel) Update(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 					fmt.Fprintf(&detail, "  URL:           %s\n", t.URL)
 					fmt.Fprintf(&detail, "  Checksum URL:  %s\n", t.ChecksumURL)
 					fmt.Fprintf(&detail, "  Tags:          %s\n", t.Tags)
-					if t.CloudInitID != nil {
-						ci, err := m.db.GetCloudInitByID(*t.CloudInitID)
-						if err == nil {
-							fmt.Fprintf(&detail, "  CloudInit:     %s\n", ci.Name)
-						}
+					if t.CloudInit != "" {
+						fmt.Fprintf(&detail, "  CloudInit:     %s\n", t.CloudInit)
 					}
-					fmt.Fprintf(&detail, "  Created:       %s\n", t.CreatedAt.Format("2006-01-02 15:04:05"))
-					fmt.Fprintf(&detail, "  Updated:       %s\n", t.UpdatedAt.Format("2006-01-02 15:04:05"))
 					m.detail = detail.String()
 					m.mode = tmplModeShow
 				}
@@ -215,15 +204,12 @@ func (m TemplatesModel) updateFormMode(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 			vmID = v
 		}
 
-		var ciID *int64
 		if ciName != "" {
-			ci, err := m.db.GetCloudInit(ciName)
-			if err != nil {
+			if _, err := m.db.GetCloudInit(ciName); err != nil {
 				m.statusMsg = fmt.Sprintf("Cloud-init %q not found", ciName)
 				m.form.Submitted = false
 				return m, nil
 			}
-			ciID = &ci.ID
 		}
 
 		if m.mode == tmplModeAdd {
@@ -233,7 +219,7 @@ func (m TemplatesModel) updateFormMode(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 				URL:         url,
 				ChecksumURL: checksumURL,
 				Tags:        tags,
-				CloudInitID: ciID,
+				CloudInit:   ciName,
 			}
 			if _, err := m.db.CreateTemplate(t); err != nil {
 				m.statusMsg = fmt.Sprintf("Error: %v", err)
@@ -249,7 +235,7 @@ func (m TemplatesModel) updateFormMode(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 				"url":          url,
 				"checksum_url": checksumURL,
 				"tags":         tags,
-				"cloudinit_id": ciID,
+				"cloudinit":    ciName,
 			}
 			if err := m.db.UpdateTemplate(m.editName, updates); err != nil {
 				m.statusMsg = fmt.Sprintf("Error: %v", err)

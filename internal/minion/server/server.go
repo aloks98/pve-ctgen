@@ -110,7 +110,16 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 		setArgs = append(setArgs, "--cores", fmt.Sprintf("%d", req.Cores))
 	}
 	if req.IpConfig != "" {
-		setArgs = append(setArgs, "--ipconfig0", fmt.Sprintf("ip=%s", req.IpConfig))
+		setArgs = append(setArgs, "--ipconfig0", req.IpConfig)
+	}
+	if req.Hostname != "" {
+		setArgs = append(setArgs, "--cihostname", req.Hostname)
+	}
+	if req.Nameserver != "" {
+		setArgs = append(setArgs, "--nameserver", req.Nameserver)
+	}
+	if req.SearchDomain != "" {
+		setArgs = append(setArgs, "--searchdomain", req.SearchDomain)
 	}
 	if req.StartAtBoot {
 		setArgs = append(setArgs, "--onboot", "1")

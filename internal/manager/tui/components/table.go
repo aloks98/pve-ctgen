@@ -5,18 +5,17 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 )
 
-// Table is a simple navigable table component.
+// Table is a navigable table with header separator.
 type Table struct {
-	Headers  []string
-	Rows     [][]string
-	Cursor   int
-	Width    int
-	Height   int
+	Headers   []string
+	Rows      [][]string
+	Cursor    int
+	Width     int
+	Height    int
 	ColWidths []int
 }
 
@@ -59,7 +58,9 @@ func (t *Table) Update(msg tea.Msg) {
 		case "home", "g":
 			t.Cursor = 0
 		case "end", "G":
-			t.Cursor = len(t.Rows) - 1
+			if len(t.Rows) > 0 {
+				t.Cursor = len(t.Rows) - 1
+			}
 		}
 	}
 }
@@ -72,22 +73,32 @@ func (t *Table) View() string {
 
 	var b strings.Builder
 
-	// Header
-	headerCells := make([]string, len(t.Headers))
+	// Header row
+	var headerParts []string
 	for i, h := range t.Headers {
 		w := t.colWidth(i)
-		headerCells[i] = styles.TableHeaderStyle.Width(w).Render(h)
+		headerParts = append(headerParts, styles.TableHeaderStyle.Width(w).Render(h))
 	}
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, headerCells...))
+	b.WriteString(strings.Join(headerParts, styles.MutedStyle.Render(" ")))
 	b.WriteString("\n")
 
-	// Rows
+	// Separator
+	var sepParts []string
+	for i := range t.Headers {
+		w := t.colWidth(i)
+		sepParts = append(sepParts, styles.MutedStyle.Render(strings.Repeat("-", w)))
+	}
+	b.WriteString(strings.Join(sepParts, styles.MutedStyle.Render("-")))
+	b.WriteString("\n")
+
+	// Empty state
 	if len(t.Rows) == 0 {
-		b.WriteString(styles.MutedStyle.Render("  (empty)"))
+		b.WriteString(styles.DimStyle.Render(" (empty)"))
 		return b.String()
 	}
 
-	visibleRows := t.Height - 2
+	// Visible rows with scrolling
+	visibleRows := t.Height - 3
 	if visibleRows <= 0 {
 		visibleRows = len(t.Rows)
 	}
@@ -103,7 +114,7 @@ func (t *Table) View() string {
 
 	for i := start; i < end; i++ {
 		row := t.Rows[i]
-		cells := make([]string, len(t.Headers))
+		var cells []string
 		for j := range t.Headers {
 			w := t.colWidth(j)
 			val := ""
@@ -117,15 +128,15 @@ func (t *Table) View() string {
 			if i == t.Cursor {
 				style = styles.TableSelectedRowStyle.Width(w)
 			}
-			cells[j] = style.Render(val)
+			cells = append(cells, style.Render(val))
 		}
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, cells...))
+		b.WriteString(strings.Join(cells, " "))
 		b.WriteString("\n")
 	}
 
-	// Footer with position
+	// Scroll indicator
 	if len(t.Rows) > visibleRows {
-		b.WriteString(styles.MutedStyle.Render(fmt.Sprintf("  %d/%d", t.Cursor+1, len(t.Rows))))
+		b.WriteString(styles.DimStyle.Render(fmt.Sprintf(" %d/%d", t.Cursor+1, len(t.Rows))))
 	}
 
 	return b.String()

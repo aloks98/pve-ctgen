@@ -46,13 +46,13 @@ func newTemplateListCmd() *cobra.Command {
 			}
 
 			w := newTabWriter()
-			fmt.Fprintln(w, "VM_ID\tNAME\tURL\tTAGS\tCLOUDINIT_ID")
+			fmt.Fprintln(w, "VM_ID\tNAME\tURL\tTAGS\tCLOUDINIT")
 			for _, t := range templates {
-				ciID := "-"
-				if t.CloudInitID != nil {
-					ciID = fmt.Sprintf("%d", *t.CloudInitID)
+				ci := "-"
+				if t.CloudInit != "" {
+					ci = t.CloudInit
 				}
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", t.VMID, t.Name, t.URL, t.Tags, ciID)
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", t.VMID, t.Name, t.URL, t.Tags, ci)
 			}
 			return w.Flush()
 		},
@@ -86,11 +86,10 @@ func newTemplateAddCmd() *cobra.Command {
 			}
 
 			if cloudinit != "" {
-				ci, err := db.GetCloudInit(cloudinit)
-				if err != nil {
+				if _, err := db.GetCloudInit(cloudinit); err != nil {
 					return fmt.Errorf("cloud-init config %q not found", cloudinit)
 				}
-				t.CloudInitID = &ci.ID
+				t.CloudInit = cloudinit
 			}
 
 			if _, err := db.CreateTemplate(t); err != nil {
@@ -134,11 +133,9 @@ func newTemplateShowCmd() *cobra.Command {
 			fmt.Printf("URL:          %s\n", t.URL)
 			fmt.Printf("Checksum URL: %s\n", t.ChecksumURL)
 			fmt.Printf("Tags:         %s\n", t.Tags)
-			if t.CloudInitID != nil {
-				fmt.Printf("CloudInit ID: %d\n", *t.CloudInitID)
+			if t.CloudInit != "" {
+				fmt.Printf("CloudInit:    %s\n", t.CloudInit)
 			}
-			fmt.Printf("Created:      %s\n", t.CreatedAt.Format("2006-01-02 15:04:05"))
-			fmt.Printf("Updated:      %s\n", t.UpdatedAt.Format("2006-01-02 15:04:05"))
 			return nil
 		},
 	}
@@ -176,13 +173,12 @@ func newTemplateEditCmd() *cobra.Command {
 			if cmd.Flags().Changed("cloudinit") {
 				ciName, _ := cmd.Flags().GetString("cloudinit")
 				if ciName == "" {
-					updates["cloudinit_id"] = nil
+					updates["cloudinit"] = ""
 				} else {
-					ci, err := db.GetCloudInit(ciName)
-					if err != nil {
+					if _, err := db.GetCloudInit(ciName); err != nil {
 						return fmt.Errorf("cloud-init config %q not found", ciName)
 					}
-					updates["cloudinit_id"] = ci.ID
+					updates["cloudinit"] = ciName
 				}
 			}
 

@@ -73,6 +73,9 @@ message LaunchVMRequest {
   string ip_config = 6;
   int32 memory = 7;
   int32 cores = 8;
+  string hostname = 9;
+  string nameserver = 10;
+  string search_domain = 11;
 }
 
 message LaunchVMResponse {
