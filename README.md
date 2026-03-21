@@ -9,16 +9,35 @@ A manager-minion system for creating Proxmox VE virtual machine templates from c
 │   Manager (your PC) │ ◄─────────────────────► │  Minion (PVE node)  │
 │                     │    build events stream   │                     │
 │  TUI / CLI          │                          │  downloads images   │
-│  SQLite store       │                          │  runs qm commands   │
+│  YAML file store    │                          │  runs qm commands   │
 │  build history      │                          │  streams logs back  │
 └─────────────────────┘                          └─────────────────────┘
 ```
 
 **Single binary, two modes.** The same `pvectgen` binary runs as `manager` on your workstation or as `minion` on Proxmox nodes.
 
-## Quick Start
+## Installation
 
-### 1. Install the Minion on your Proxmox node
+### Manager (your workstation)
+
+**Pre-built binary (recommended):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install.sh | bash
+```
+
+**From source:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install.sh | bash -s -- --source
+```
+
+**Or manually:**
+```bash
+git clone https://github.com/aloks98/pve-ctgen.git
+cd pve-ctgen
+make install
+```
+
+### Minion (Proxmox node)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash
@@ -26,46 +45,47 @@ curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/inst
 
 This auto-detects the Proxmox hostname, generates an API key, installs a systemd service, and prints a connection token.
 
-### 2. Install the Manager on your workstation
+### Updating
 
-**macOS (Homebrew):**
 ```bash
-# From GitHub releases
-curl -fsSL https://github.com/aloks98/pve-ctgen/releases/latest/download/pvectgen_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/').tar.gz | tar xz
-sudo mv pvectgen /usr/local/bin/
+# Self-update (built into the binary)
+pvectgen update
+
+# Or via script
+curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/update.sh | bash
+
+# Specific version
+pvectgen update v1.2.0
 ```
 
-**From source:**
-```bash
-git clone https://github.com/aloks98/pve-ctgen.git
-cd pve-ctgen
-make build-local
-```
-
-### 3. Connect to your node
+## Quick Start
 
 ```bash
-pvectgen manager node add --token <token-from-step-1> --display-name "my-node"
-pvectgen manager node health
-```
+# 1. Install minion on Proxmox node (see above), copy the connection token
 
-### 4. Import default templates and launch the TUI
+# 2. Connect to your node
+pvectgen manager node add --token <token> --display-name "my-node"
 
-```bash
+# 3. Import default templates and cloud-init configs
 pvectgen manager import
+
+# 4. Launch the TUI
 pvectgen manager tui
 ```
 
 ## Features
 
 - **Multi-node management** — manage templates across multiple Proxmox nodes from one interface
-- **Interactive TUI** — BubbleTea-based terminal UI with live build progress streaming
+- **Interactive TUI** — BubbleTea-based terminal UI with live build progress, background builds, scrollable views
 - **Full CLI** — every operation available as a CLI command for scripting
-- **Cloud-init management** — store, edit, and validate cloud-init configs with YAML validation
-- **Build history** — SQLite-backed history of all builds with per-step logs
-- **VM launching** — clone templates with configurable memory, cores, IP (DHCP or static)
-- **One-click deploy** — install script + systemd service for Proxmox nodes
+- **Cloud-init management** — edit configs in neovim/vim directly from the TUI, with YAML validation
+- **Build history** — file-based history of all builds with per-step logs
+- **VM launching** — clone templates with hostname, memory, cores, static/DHCP IP, nameserver, search domain
+- **Background builds** — press esc during a build to return to menu, build continues in background
+- **Self-update** — `pvectgen update` downloads and replaces the binary
+- **One-click deploy** — install scripts for both manager and minion
 - **Secure** — API key authentication on all gRPC calls
+- **File-based storage** — all data in human-readable YAML files, no database
 
 ## TUI
 
@@ -76,60 +96,66 @@ pvectgen manager tui
 | Screen | Description |
 |--------|-------------|
 | **Nodes** | Add/remove Proxmox nodes, health checks |
-| **Cloud-Init Store** | Add, edit (inline YAML editor), delete configs |
-| **Template Store** | Manage VM template definitions |
-| **Build Steps** | Add, edit, reorder (J/K) build commands |
-| **New Build** | Select templates + node, live progress view |
-| **Build History** | Browse past builds, view per-step logs |
-| **Launch VM** | Pick node → pick template → configure → launch |
+| **Cloud-Init** | View, add, edit (opens in neovim/vim), delete configs |
+| **Templates** | Manage VM template definitions |
+| **Steps** | Add, edit, reorder (J/K) build commands |
+| **Build** | Select templates → node → override VM IDs → live progress |
+| **History** | Browse past builds with scrollable per-step logs |
+| **Launch VM** | Pick node → pick template from node → configure → launch |
+
+### TUI Shortcuts
+
+| Key | Context | Action |
+|-----|---------|--------|
+| `1-7` | Home | Jump to menu item |
+| `j/k` | Everywhere | Navigate / scroll |
+| `enter` | Lists | Select / view detail |
+| `a` | Lists | Add new item |
+| `e` | Lists | Edit selected item |
+| `d` | Lists | Delete selected item |
+| `J/K` | Steps | Reorder steps |
+| `space` | Build select | Toggle template |
+| `esc` | Sub-views | Go back |
+| `esc` | Build progress | Send build to background |
+| `q` | Home | Quit |
 
 ## CLI Reference
 
 ```
-pvectgen manager cloudinit list|add|show|edit|remove
-pvectgen manager template  list|add|show|edit|remove
-pvectgen manager steps     list|add|edit|remove|reset
-pvectgen manager node      list|add|remove|health
-pvectgen manager build     run --template name --node name [--all]
-pvectgen manager builds    list|show|logs
-pvectgen manager vm        launch|list
-pvectgen manager import    [--images path] [--steps path] [--cloudinit-dir path]
-pvectgen manager tui
-
-pvectgen minion serve      [--config /etc/pvectgen/minion.yaml]
-pvectgen minion connect    [--config /etc/pvectgen/minion.yaml]
+pvectgen
+├── manager
+│   ├── tui                                  # Interactive TUI
+│   ├── cloudinit list|add|show|edit|remove   # Cloud-init configs
+│   ├── template  list|add|show|edit|remove   # VM templates
+│   ├── steps     list|add|edit|remove|reset  # Build steps
+│   ├── node      list|add|remove|health      # Proxmox nodes
+│   ├── build     run|cancel                  # Trigger builds
+│   ├── builds    list|show|logs              # Build history
+│   ├── vm        launch|list                 # VM operations
+│   └── import    [--force]                   # Import from config files
+├── minion
+│   ├── serve     [--config path]             # Start gRPC server
+│   └── connect   [--config path]             # Show connection token
+├── update        [version]                   # Self-update
+└── version                                   # Show version
 ```
 
-## Deployment
+## Data Storage
 
-### Automated (GitHub Releases)
+All data is stored as human-readable YAML files:
 
-Every tagged release builds binaries for Linux and macOS (amd64 + arm64) via GoReleaser.
-
-**Install minion on Proxmox:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash
-# Or with a specific version:
-curl -fsSL .../install-minion.sh | bash -s -- v1.0.0
 ```
-
-**Deploy via SSH (from your workstation):**
-```bash
-make deploy NODE=root@192.168.1.100
-```
-
-### Creating a release
-
-```bash
-make release VERSION=v1.0.0
-# Tags, pushes → GitHub Actions builds + publishes
-```
-
-### Local snapshot build (all platforms)
-
-```bash
-make snapshot
-ls dist/
+~/.config/pvectgen/
+├── config.yaml           # Manager config
+├── nodes.yaml            # Node connections
+├── templates.yaml        # Template definitions
+├── steps.yaml            # Build step commands
+├── cloudinit/             # Cloud-init configs (one .yaml per config)
+│   ├── ubuntu.yaml
+│   ├── debian.yaml
+│   └── ...
+└── builds/                # Build history (one .yaml per build)
+    └── <uuid>.yaml
 ```
 
 ## Configuration
@@ -137,8 +163,8 @@ ls dist/
 ### Manager (`~/.config/pvectgen/config.yaml`)
 
 ```yaml
-db_path: "~/.config/pvectgen/pvectgen.db"
-default_node: "my-node"
+data_dir: "~/.config/pvectgen"
+default_node: ""
 ```
 
 ### Minion (`/etc/pvectgen/minion.yaml`)
@@ -164,6 +190,25 @@ Build step commands support these placeholders:
 | `{{.Vendor}}` | Cloud-init filename | `ubuntu.yaml` |
 | `{{.FilePath}}` | Working image path | `/tmp/pvectgen/base.qcow2` |
 
+## VM Launch Options
+
+When launching a VM from a template, you can configure:
+
+| Option | Description |
+|--------|-------------|
+| VM ID | New VM ID on the Proxmox node |
+| Name | VM name (used as hostname by cloud-init) |
+| Hostname | FQDN — splits into name + search domain (e.g. `web.e412.in` → name `web`, searchdomain `e412.in`) |
+| Memory | RAM in MB (default: 2048) |
+| Cores | CPU cores (default: 2) |
+| IP Config | DHCP or static |
+| IP Address | Static IP with CIDR (e.g. `192.168.1.50/24`) |
+| Gateway | Gateway IP (e.g. `192.168.1.1`) |
+| Nameserver | DNS server (e.g. `8.8.8.8`) |
+| Search Domain | DNS search domain (e.g. `e412.in`) |
+| Start | Start VM after creation |
+| Start at Boot | Auto-start on node boot |
+
 ## Supported OS Images (defaults)
 
 | VM ID | Name | Distribution |
@@ -179,36 +224,53 @@ Build step commands support these placeholders:
 
 Add more via `pvectgen manager template add` or by editing `config/os_list.json` and running `pvectgen manager import`.
 
+## Deployment
+
+### Releases (GitHub Actions)
+
+Create a release through the GitHub UI → CI runs lint + tests → GoReleaser builds binaries for linux/darwin × amd64/arm64 and uploads to the release.
+
+### Deploy minion via SSH
+
+```bash
+make deploy NODE=root@192.168.1.100
+```
+
 ## Development
 
 ```bash
 make build-local    # Build for current platform
 make build          # Cross-compile for Linux amd64
+make install        # Build + install to /usr/local/bin
 make lint           # go vet
 make test           # go test ./...
 make proto          # Regenerate protobuf (requires protoc)
-make snapshot       # GoReleaser local build (all platforms)
 ```
 
 ## Architecture
 
 ```
-cmd/pvectgen/main.go           Cobra root command
+cmd/pvectgen/main.go           Cobra root command + update command
 internal/
-  shared/                      Shared code (models, checksum, download, validation, token)
+  shared/                      Shared: models, checksum, download, cloudinit validation, token, fileutil
   manager/
     cli/                       All manager Cobra subcommands
-    tui/                       BubbleTea app, views, components, styles
-    store/                     SQLite CRUD + migrations
+    tui/                       BubbleTea app, views, components, styles, spinners
+    store/store.go             File-based YAML store (nodes, templates, steps, builds, cloud-init)
     grpc/client.go             gRPC client to minions
     config/                    Manager YAML config
   minion/
-    cli/                       serve + connect commands, Proxmox checks
+    cli/                       serve + connect commands, Proxmox environment check
     server/                    gRPC server + auth interceptor
-    builder/                   Build orchestration
+    builder/                   Build orchestration with event streaming
     executor/                  Channel-based shell execution
     config/                    Minion YAML config + auto-detection
+  update/                      Self-update from GitHub releases
 proto/pvectgen/v1/             Protobuf service definition
+scripts/
+  install.sh                   Install manager (binary or --source)
+  install-minion.sh            Install minion on Proxmox nodes
+  update.sh                    Update existing installation
 ```
 
 ## License
