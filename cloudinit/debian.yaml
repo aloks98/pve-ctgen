@@ -1,4 +1,6 @@
 #cloud-config
+preserve_hostname: false
+manage_etc_hosts: true
 package_upgrade: true
 locale: en_US.UTF-8
 timezone: Asia/Kolkata
@@ -155,8 +157,10 @@ write_files:
         source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 
       # ── Homebrew ────────────────────────────────────────────
-      [[ -d /home/linuxbrew/.linuxbrew ]] && \
+      [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]] && \
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      # MOTD on login
+      if [[ -o login && -f /etc/profile.d/motd.sh ]]; then source /etc/profile.d/motd.sh; fi
 
   # Root .zshrc
   - path: /root/.zshrc
@@ -243,6 +247,8 @@ write_files:
       AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
 
 runcmd:
+  # Set zsh as default shell for root
+  - chsh -s /bin/zsh root
   # Generate locales (en_US for system default, en_IN for SSH client compatibility)
   - sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
   - sed -i 's/^# *en_IN.UTF-8 UTF-8/en_IN.UTF-8 UTF-8/' /etc/locale.gen

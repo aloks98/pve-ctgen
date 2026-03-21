@@ -1,4 +1,6 @@
 #cloud-config
+preserve_hostname: false
+manage_etc_hosts: true
 package_upgrade: true
 locale: en_US.UTF-8
 timezone: Asia/Kolkata
@@ -94,7 +96,9 @@ write_files:
       alias rm='rm -i' cp='cp -i' mv='mv -i'
       [[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]] && source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
       [[ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]] && source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-      [[ -d /home/linuxbrew/.linuxbrew ]] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      # MOTD on login
+      if [[ -o login && -f /etc/profile.d/motd.sh ]]; then source /etc/profile.d/motd.sh; fi
 
   - path: /root/.zshrc
     permissions: "0644"
@@ -173,6 +177,8 @@ write_files:
       AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
 
 runcmd:
+  # Set zsh as default shell for root
+  - chsh -s /bin/zsh root
   - localectl set-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
   - dnf config-manager --set-enabled crb || dnf config-manager --set-enabled powertools || true
   - dnf install -y rubygems ruby-devel gcc make || true
