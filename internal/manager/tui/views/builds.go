@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
@@ -18,6 +19,10 @@ type BuildsModel struct {
 	builds     []store.BuildWithDetails
 	detail     string
 	showDetail bool
+	viewport   viewport.Model
+	vpReady    bool
+	width      int
+	height     int
 }
 
 // NewBuildsModel creates a new BuildsModel.
@@ -33,6 +38,16 @@ func NewBuildsModel(db *store.DB) BuildsModel {
 func (m *BuildsModel) SetSize(w, h int) {
 	m.table.Width = w
 	m.table.Height = h - 4
+	m.width = w
+	m.height = h
+	vpHeight := h - 5
+	if !m.vpReady {
+		m.viewport = viewport.New(w, vpHeight)
+		m.vpReady = true
+	} else {
+		m.viewport.Width = w
+		m.viewport.Height = vpHeight
+	}
 }
 
 // InSubView returns true when detail is showing.
@@ -69,19 +84,32 @@ func (m *BuildsModel) Refresh() {
 
 // Update handles key events.
 func (m BuildsModel) Update(msg tea.Msg) (BuildsModel, tea.Cmd) {
-	if km, ok := msg.(tea.KeyMsg); ok {
-		if m.showDetail {
+	if m.showDetail {
+		if km, ok := msg.(tea.KeyMsg); ok {
 			if km.String() == "esc" || km.String() == "backspace" {
 				m.showDetail = false
+				return m, nil
 			}
-			return m, nil
 		}
+		// Pass to viewport for scrolling
+		if m.vpReady {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
 
+	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
 		case "enter":
 			idx := m.table.SelectedRow()
 			if idx >= 0 && idx < len(m.builds) {
 				m.detail = m.buildDetail(idx)
+				if m.vpReady {
+					m.viewport.SetContent(m.detail)
+					m.viewport.GotoTop()
+				}
 				m.showDetail = true
 			}
 		default:
@@ -125,11 +153,10 @@ func (m *BuildsModel) buildDetail(idx int) string {
 		fmt.Fprintf(&detail, "    %s %s%s\n", icon, r.StepName, duration)
 
 		if r.Log != "" {
-			// Show log lines indented
 			lines := strings.Split(strings.TrimSpace(r.Log), "\n")
 			for _, line := range lines {
 				if line != "" {
-					fmt.Fprintf(&detail, "      %s\n", styles.MutedStyle.Render(line))
+					fmt.Fprintf(&detail, "      %s\n", styles.DimStyle.Render(line))
 				}
 			}
 		}
@@ -144,19 +171,30 @@ func (m BuildsModel) View() string {
 
 	if m.showDetail {
 		b.WriteString("\n")
-		b.WriteString(styles.TitleStyle.Render(" Build Detail "))
+		title := styles.SectionStyle.Render(" Build Detail ")
+		scrollPct := styles.DimStyle.Render(fmt.Sprintf(" %d%%", int(m.viewport.ScrollPercent()*100)))
+		b.WriteString(title + scrollPct)
 		b.WriteString("\n\n")
-		b.WriteString(m.detail)
+		if m.vpReady {
+			b.WriteString(m.viewport.View())
+		} else {
+			b.WriteString(m.detail)
+		}
 		b.WriteString("\n")
-		b.WriteString(styles.MutedStyle.Render("  esc: back"))
+		b.WriteString(styles.HelpBar(
+			styles.HelpEntry("j/k", "scroll"),
+			styles.HelpEntry("esc", "back"),
+		))
 		return b.String()
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styles.TitleStyle.Render(" Build History "))
+	b.WriteString(styles.SectionStyle.Render(" Build History "))
 	b.WriteString("\n\n")
 	b.WriteString(m.table.View())
 	b.WriteString("\n\n")
-	b.WriteString(styles.MutedStyle.Render("  enter: details"))
+	b.WriteString(styles.HelpBar(
+		styles.HelpEntry("enter", "details"),
+	))
 	return b.String()
 }

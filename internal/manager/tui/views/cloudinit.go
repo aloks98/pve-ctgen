@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
@@ -40,6 +41,8 @@ type CloudInitModel struct {
 	detail    string
 	editName  string
 	nameInput components.Form
+	viewport  viewport.Model
+	vpReady   bool
 	statusMsg string
 	width     int
 	height    int
@@ -60,6 +63,14 @@ func (m *CloudInitModel) SetSize(w, h int) {
 	m.table.Height = h - 4
 	m.width = w
 	m.height = h
+	vpHeight := h - 5 // title + help + padding
+	if !m.vpReady {
+		m.viewport = viewport.New(w, vpHeight)
+		m.vpReady = true
+	} else {
+		m.viewport.Width = w
+		m.viewport.Height = vpHeight
+	}
 }
 
 // Refresh reloads data from the store.
@@ -98,7 +109,14 @@ func (m CloudInitModel) Update(msg tea.Msg) (CloudInitModel, tea.Cmd) {
 		if km, ok := msg.(tea.KeyMsg); ok {
 			if km.String() == "esc" || km.String() == "backspace" {
 				m.mode = ciModeList
+				return m, nil
 			}
+		}
+		// Pass all other messages to viewport for scrolling
+		if m.vpReady {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
 		}
 		return m, nil
 
@@ -116,6 +134,10 @@ func (m CloudInitModel) Update(msg tea.Msg) (CloudInitModel, tea.Cmd) {
 				if err == nil {
 					m.editName = c.Name
 					m.detail = c.Content
+					if m.vpReady {
+						m.viewport.SetContent(c.Content)
+						m.viewport.GotoTop()
+					}
 					m.mode = ciModeView
 				}
 			}
@@ -280,10 +302,17 @@ func (m CloudInitModel) View() string {
 	case ciModeView:
 		b.WriteString("\n")
 		b.WriteString(styles.SectionStyle.Render(" Cloud-Init: " + m.editName + " "))
+		scrollPct := styles.DimStyle.Render(fmt.Sprintf(" %d%%", int(m.viewport.ScrollPercent()*100)))
+		b.WriteString(scrollPct)
 		b.WriteString("\n\n")
-		b.WriteString(m.detail)
-		b.WriteString("\n\n")
+		if m.vpReady {
+			b.WriteString(m.viewport.View())
+		} else {
+			b.WriteString(m.detail)
+		}
+		b.WriteString("\n")
 		b.WriteString(styles.HelpBar(
+			styles.HelpEntry("j/k", "scroll"),
 			styles.HelpEntry("esc", "back"),
 		))
 		return b.String()

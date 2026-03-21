@@ -1,5 +1,4 @@
 #cloud-config
-hostname: almalinux
 package_upgrade: true
 locale: en_US.UTF-8
 timezone: Asia/Kolkata

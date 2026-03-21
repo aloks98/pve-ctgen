@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 
@@ -112,8 +113,17 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 	if req.IpConfig != "" {
 		setArgs = append(setArgs, "--ipconfig0", req.IpConfig)
 	}
+	// Proxmox cloud-init uses VM name as hostname.
+	// If hostname contains a dot (FQDN like "web.e412.in"), split into name + searchdomain.
 	if req.Hostname != "" {
-		setArgs = append(setArgs, "--cihostname", req.Hostname)
+		if parts := strings.SplitN(req.Hostname, ".", 2); len(parts) == 2 {
+			setArgs = append(setArgs, "--name", parts[0])
+			if req.SearchDomain == "" {
+				setArgs = append(setArgs, "--searchdomain", parts[1])
+			}
+		} else {
+			setArgs = append(setArgs, "--name", req.Hostname)
+		}
 	}
 	if req.Nameserver != "" {
 		setArgs = append(setArgs, "--nameserver", req.Nameserver)
@@ -127,11 +137,12 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 
 	if len(setArgs) > 2 {
 		cmd = exec.Command("qm", setArgs...)
+		log.Printf("LaunchVM configure: qm %s", strings.Join(setArgs, " "))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return &pb.LaunchVMResponse{
 				VmId:    req.NewVmId,
 				Success: false,
-				Message: fmt.Sprintf("configure failed: %v\n%s", err, string(out)),
+				Message: fmt.Sprintf("configure failed: %v\ncommand: qm %s\n%s", err, strings.Join(setArgs, " "), string(out)),
 			}, nil
 		}
 	}
