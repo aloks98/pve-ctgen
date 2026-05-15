@@ -34,7 +34,7 @@ storage:
   links:
     # Enable kubernetes sysext images for kubelet/kubeadm/kubectl + crictl + cni-plugins
     - path: /etc/extensions/kubernetes.raw
-      target: /opt/extensions/kubernetes/kubernetes-v1.31.0-x86-64.raw
+      target: /opt/extensions/kubernetes/kubernetes-v1.35.5-x86-64.raw
       hard: false
 
 systemd:
@@ -53,7 +53,7 @@ systemd:
       contents: |
         [Unit]
         Description=Download Kubernetes systemd-sysext image
-        ConditionPathExists=!/opt/extensions/kubernetes/kubernetes-v1.31.0-x86-64.raw
+        ConditionPathExists=!/opt/extensions/kubernetes/kubernetes-v1.35.5-x86-64.raw
         After=network-online.target
         Wants=network-online.target
 
@@ -61,7 +61,7 @@ systemd:
         Type=oneshot
         RemainAfterExit=true
         ExecStartPre=/usr/bin/mkdir -p /opt/extensions/kubernetes
-        ExecStart=/usr/bin/curl -fsSL -o /opt/extensions/kubernetes/kubernetes-v1.31.0-x86-64.raw https://extensions.flatcar.org/extensions/kubernetes-v1.31.0-x86-64.raw
+        ExecStart=/usr/bin/curl -fsSL -o /opt/extensions/kubernetes/kubernetes-v1.35.5-x86-64.raw https://extensions.flatcar.org/extensions/kubernetes-v1.35.5-x86-64.raw
         ExecStartPost=/usr/bin/systemctl restart systemd-sysext.service
 
         [Install]
