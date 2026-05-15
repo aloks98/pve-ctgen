@@ -59,6 +59,17 @@ func newVMLaunchCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
+			// Detect init type from local store by VM ID
+			initType := "cloudinit"
+			if templates, err := db.ListTemplates(); err == nil {
+				for _, t := range templates {
+					if t.VMID == templateID {
+						initType = t.EffectiveInitType()
+						break
+					}
+				}
+			}
+
 			resp, err := client.LaunchVM(ctx, &pb.LaunchVMRequest{
 				TemplateId:  int32(templateID),
 				NewVmId:     int32(vmID),
@@ -68,6 +79,7 @@ func newVMLaunchCmd() *cobra.Command {
 				IpConfig:    ipConfig,
 				Memory:      int32(memory),
 				Cores:       int32(cores),
+				InitType:    initType,
 			})
 			if err != nil {
 				return fmt.Errorf("launch VM: %w", err)

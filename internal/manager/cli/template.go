@@ -46,13 +46,13 @@ func newTemplateListCmd() *cobra.Command {
 			}
 
 			w := newTabWriter()
-			fmt.Fprintln(w, "VM_ID\tNAME\tURL\tTAGS\tCLOUDINIT")
+			fmt.Fprintln(w, "VM_ID\tNAME\tTYPE\tINIT\tURL\tTAGS")
 			for _, t := range templates {
 				ci := "-"
 				if t.CloudInit != "" {
 					ci = t.CloudInit
 				}
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", t.VMID, t.Name, t.URL, t.Tags, ci)
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", t.VMID, t.Name, t.EffectiveInitType(), ci, t.URL, t.Tags)
 			}
 			return w.Flush()
 		},

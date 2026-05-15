@@ -222,15 +222,19 @@ func (x *BuildStep) GetCommand() string {
 }
 
 type BuildRequest struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	BuildId           string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	Image             *Image                 `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
-	Steps             []*BuildStep           `protobuf:"bytes,3,rep,name=steps,proto3" json:"steps,omitempty"`
-	CloudinitContent  []byte                 `protobuf:"bytes,4,opt,name=cloudinit_content,json=cloudinitContent,proto3" json:"cloudinit_content,omitempty"`
-	CloudinitFilename string                 `protobuf:"bytes,5,opt,name=cloudinit_filename,json=cloudinitFilename,proto3" json:"cloudinit_filename,omitempty"`
-	Options           map[string]string      `protobuf:"bytes,6,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	BuildId string                 `protobuf:"bytes,1,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	Image   *Image                 `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
+	Steps   []*BuildStep           `protobuf:"bytes,3,rep,name=steps,proto3" json:"steps,omitempty"`
+	// init_content carries either cloud-init YAML or Ignition JSON bytes.
+	CloudinitContent []byte `protobuf:"bytes,4,opt,name=cloudinit_content,json=cloudinitContent,proto3" json:"cloudinit_content,omitempty"`
+	// init_filename: destination filename in /var/lib/vz/snippets/ (e.g. "ubuntu.yaml" or "k8s-node.ign").
+	CloudinitFilename string            `protobuf:"bytes,5,opt,name=cloudinit_filename,json=cloudinitFilename,proto3" json:"cloudinit_filename,omitempty"`
+	Options           map[string]string `protobuf:"bytes,6,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// init_type: "cloudinit" (default) or "ignition".
+	InitType      string `protobuf:"bytes,7,opt,name=init_type,json=initType,proto3" json:"init_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BuildRequest) Reset() {
@@ -303,6 +307,13 @@ func (x *BuildRequest) GetOptions() map[string]string {
 		return x.Options
 	}
 	return nil
+}
+
+func (x *BuildRequest) GetInitType() string {
+	if x != nil {
+		return x.InitType
+	}
+	return ""
 }
 
 type BuildEvent struct {
@@ -502,18 +513,20 @@ func (x *HealthResponse) GetAvailableStorage() []string {
 }
 
 type LaunchVMRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TemplateId    int32                  `protobuf:"varint,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
-	NewVmId       int32                  `protobuf:"varint,2,opt,name=new_vm_id,json=newVmId,proto3" json:"new_vm_id,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Start         bool                   `protobuf:"varint,4,opt,name=start,proto3" json:"start,omitempty"`
-	StartAtBoot   bool                   `protobuf:"varint,5,opt,name=start_at_boot,json=startAtBoot,proto3" json:"start_at_boot,omitempty"`
-	IpConfig      string                 `protobuf:"bytes,6,opt,name=ip_config,json=ipConfig,proto3" json:"ip_config,omitempty"`
-	Memory        int32                  `protobuf:"varint,7,opt,name=memory,proto3" json:"memory,omitempty"`
-	Cores         int32                  `protobuf:"varint,8,opt,name=cores,proto3" json:"cores,omitempty"`
-	Hostname      string                 `protobuf:"bytes,9,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Nameserver    string                 `protobuf:"bytes,10,opt,name=nameserver,proto3" json:"nameserver,omitempty"`
-	SearchDomain  string                 `protobuf:"bytes,11,opt,name=search_domain,json=searchDomain,proto3" json:"search_domain,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId   int32                  `protobuf:"varint,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	NewVmId      int32                  `protobuf:"varint,2,opt,name=new_vm_id,json=newVmId,proto3" json:"new_vm_id,omitempty"`
+	Name         string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Start        bool                   `protobuf:"varint,4,opt,name=start,proto3" json:"start,omitempty"`
+	StartAtBoot  bool                   `protobuf:"varint,5,opt,name=start_at_boot,json=startAtBoot,proto3" json:"start_at_boot,omitempty"`
+	IpConfig     string                 `protobuf:"bytes,6,opt,name=ip_config,json=ipConfig,proto3" json:"ip_config,omitempty"`
+	Memory       int32                  `protobuf:"varint,7,opt,name=memory,proto3" json:"memory,omitempty"`
+	Cores        int32                  `protobuf:"varint,8,opt,name=cores,proto3" json:"cores,omitempty"`
+	Hostname     string                 `protobuf:"bytes,9,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Nameserver   string                 `protobuf:"bytes,10,opt,name=nameserver,proto3" json:"nameserver,omitempty"`
+	SearchDomain string                 `protobuf:"bytes,11,opt,name=search_domain,json=searchDomain,proto3" json:"search_domain,omitempty"`
+	// init_type: "cloudinit" (default) or "ignition". Affects how hostname/network is applied.
+	InitType      string `protobuf:"bytes,12,opt,name=init_type,json=initType,proto3" json:"init_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -621,6 +634,13 @@ func (x *LaunchVMRequest) GetNameserver() string {
 func (x *LaunchVMRequest) GetSearchDomain() string {
 	if x != nil {
 		return x.SearchDomain
+	}
+	return ""
+}
+
+func (x *LaunchVMRequest) GetInitType() string {
+	if x != nil {
+		return x.InitType
 	}
 	return ""
 }
@@ -839,14 +859,15 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	"\x06vendor\x18\x06 \x01(\tR\x06vendor\"9\n" +
 	"\tBuildStep\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\acommand\x18\x02 \x01(\tR\acommand\"\xdb\x02\n" +
+	"\acommand\x18\x02 \x01(\tR\acommand\"\xf8\x02\n" +
 	"\fBuildRequest\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12(\n" +
 	"\x05image\x18\x02 \x01(\v2\x12.pvectgen.v1.ImageR\x05image\x12,\n" +
 	"\x05steps\x18\x03 \x03(\v2\x16.pvectgen.v1.BuildStepR\x05steps\x12+\n" +
 	"\x11cloudinit_content\x18\x04 \x01(\fR\x10cloudinitContent\x12-\n" +
 	"\x12cloudinit_filename\x18\x05 \x01(\tR\x11cloudinitFilename\x12@\n" +
-	"\aoptions\x18\x06 \x03(\v2&.pvectgen.v1.BuildRequest.OptionsEntryR\aoptions\x1a:\n" +
+	"\aoptions\x18\x06 \x03(\v2&.pvectgen.v1.BuildRequest.OptionsEntryR\aoptions\x12\x1b\n" +
+	"\tinit_type\x18\a \x01(\tR\binitType\x1a:\n" +
 	"\fOptionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xca\x01\n" +
@@ -865,7 +886,7 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x18\n" +
 	"\ahealthy\x18\x03 \x01(\bR\ahealthy\x12'\n" +
 	"\x0fproxmox_version\x18\x04 \x01(\tR\x0eproxmoxVersion\x12+\n" +
-	"\x11available_storage\x18\x05 \x03(\tR\x10availableStorage\"\xc8\x02\n" +
+	"\x11available_storage\x18\x05 \x03(\tR\x10availableStorage\"\xe5\x02\n" +
 	"\x0fLaunchVMRequest\x12\x1f\n" +
 	"\vtemplate_id\x18\x01 \x01(\x05R\n" +
 	"templateId\x12\x1a\n" +
@@ -881,7 +902,8 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	"nameserver\x18\n" +
 	" \x01(\tR\n" +
 	"nameserver\x12#\n" +
-	"\rsearch_domain\x18\v \x01(\tR\fsearchDomain\"[\n" +
+	"\rsearch_domain\x18\v \x01(\tR\fsearchDomain\x12\x1b\n" +
+	"\tinit_type\x18\f \x01(\tR\binitType\"[\n" +
 	"\x10LaunchVMResponse\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\x05R\x04vmId\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x18\n" +

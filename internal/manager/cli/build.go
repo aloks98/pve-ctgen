@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
+	"github.com/aloks98/pve-ctgen/internal/manager/initresolve"
+	"github.com/aloks98/pve-ctgen/internal/shared/models"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +44,6 @@ func newBuildRunCmd() *cobra.Command {
 			nodeName, _ := cmd.Flags().GetString("node")
 			all, _ := cmd.Flags().GetBool("all")
 
-			// Get node
 			if nodeName == "" {
 				return fmt.Errorf("--node is required")
 			}
@@ -51,40 +52,12 @@ func newBuildRunCmd() *cobra.Command {
 				return fmt.Errorf("node %q: %w", nodeName, err)
 			}
 
-			// Get templates
-			var templates []struct {
-				vmID int
-				name string
-				url  string
-				csURL string
-				tags string
-				ciContent []byte
-				ciFilename string
-			}
-
+			// Collect templates
+			var templates []models.Template
 			if all {
-				allTemplates, err := db.ListTemplates()
+				templates, err = db.ListTemplates()
 				if err != nil {
 					return err
-				}
-				for _, t := range allTemplates {
-					entry := struct {
-						vmID int
-						name string
-						url  string
-						csURL string
-						tags string
-						ciContent []byte
-						ciFilename string
-					}{t.VMID, t.Name, t.URL, t.ChecksumURL, t.Tags, nil, ""}
-					if t.CloudInit != "" {
-						ci, err := db.GetCloudInitByID(t.CloudInit)
-						if err == nil {
-							entry.ciContent = []byte(ci.Content)
-							entry.ciFilename = ci.Name
-						}
-					}
-					templates = append(templates, entry)
 				}
 			} else {
 				for _, name := range templateNames {
@@ -92,31 +65,14 @@ func newBuildRunCmd() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("template %q: %w", name, err)
 					}
-					entry := struct {
-						vmID int
-						name string
-						url  string
-						csURL string
-						tags string
-						ciContent []byte
-						ciFilename string
-					}{t.VMID, t.Name, t.URL, t.ChecksumURL, t.Tags, nil, ""}
-					if t.CloudInit != "" {
-						ci, err := db.GetCloudInitByID(t.CloudInit)
-						if err == nil {
-							entry.ciContent = []byte(ci.Content)
-							entry.ciFilename = ci.Name
-						}
-					}
-					templates = append(templates, entry)
+					templates = append(templates, *t)
 				}
 			}
-
 			if len(templates) == 0 {
 				return fmt.Errorf("no templates selected")
 			}
 
-			// Get build steps
+			// Build steps
 			steps, err := db.ListBuildSteps()
 			if err != nil {
 				return err
@@ -126,41 +82,47 @@ func newBuildRunCmd() *cobra.Command {
 				pbSteps = append(pbSteps, &pb.BuildStep{Name: s.Name, Command: s.Command})
 			}
 
-			// Connect to node
 			client, err := managergrpc.NewClient(node.Address, node.APIKey)
 			if err != nil {
 				return fmt.Errorf("connect to %s: %w", node.Name, err)
 			}
 			defer client.Close()
 
-			// Run builds
 			for _, t := range templates {
 				buildID := uuid.New().String()
-
-				if _, err := db.CreateBuild(buildID, t.name, node.Name); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to record build for %s: %v\n", t.name, err)
+				initType := t.EffectiveInitType()
+				ciContent, ciFilename, err := initresolve.Resolve(db, t)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Init config for %s: %v\n", t.Name, err)
 					continue
 				}
 
-				fmt.Printf("Building %s (build: %s)...\n", t.name, buildID[:8])
+				if _, err := db.CreateBuild(buildID, t.Name, node.Name); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to record build for %s: %v\n", t.Name, err)
+					continue
+				}
+
+				fmt.Printf("Building %s (%s, build: %s)...\n", t.Name, initType, buildID[:8])
 
 				req := &pb.BuildRequest{
 					BuildId: buildID,
 					Image: &pb.Image{
-						Id:          int32(t.vmID),
-						Name:        t.name,
-						Url:         t.url,
-						ChecksumUrl: t.csURL,
-						Tags:        t.tags,
+						Id:          int32(t.VMID),
+						Name:        t.Name,
+						Url:         t.URL,
+						ChecksumUrl: t.ChecksumURL,
+						Tags:        t.Tags,
+						Vendor:      ciFilename,
 					},
 					Steps:             pbSteps,
-					CloudinitContent:  t.ciContent,
-					CloudinitFilename: t.ciFilename,
+					CloudinitContent:  ciContent,
+					CloudinitFilename: ciFilename,
+					InitType:          initType,
 				}
 
 				stream, err := client.Build(context.Background(), req)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Build RPC failed for %s: %v\n", t.name, err)
+					fmt.Fprintf(os.Stderr, "Build RPC failed for %s: %v\n", t.Name, err)
 					db.UpdateBuildStatus(buildID, "failed")
 					continue
 				}

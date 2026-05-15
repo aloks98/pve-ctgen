@@ -33,7 +33,7 @@
   },
   {
     "name": "Set tags",
-    "command": "qm set {{.ID}} --tags {{.Tags}}"
+    "command": "[ -n \"{{.Tags}}\" ] && qm set {{.ID}} --tags \"{{.Tags}}\" || true"
   },
   {
     "name": "Set credentials",
@@ -41,7 +41,7 @@
   },
   {
     "name": "Set cloud-init user data",
-    "command": "qm set {{.ID}} --cicustom user=local:snippets/{{.Vendor}}"
+    "command": "[ -n \"{{.Vendor}}\" ] && qm set {{.ID}} --cicustom user=local:snippets/{{.Vendor}} || true"
   },
   {
     "name": "Convert to template",

@@ -31,7 +31,7 @@ type BuildWithDetails struct {
 
 // Open creates (if needed) the data directory and returns a store.
 func Open(dir string) (*DB, error) {
-	for _, sub := range []string{"", "cloudinit", "builds"} {
+	for _, sub := range []string{"", "cloudinit", "ignition", "builds"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
 			return nil, fmt.Errorf("create %s: %w", sub, err)
 		}
@@ -46,7 +46,25 @@ func (db *DB) Close() error { return nil }
 
 func (db *DB) path(name string) string          { return filepath.Join(db.dir, name) }
 func (db *DB) ciDir() string                     { return filepath.Join(db.dir, "cloudinit") }
+func (db *DB) ignDir() string                    { return filepath.Join(db.dir, "ignition") }
 func (db *DB) buildsDir() string                 { return filepath.Join(db.dir, "builds") }
+
+// initDir returns the directory for the given init type.
+func (db *DB) initDir(initType string) string {
+	if initType == models.InitTypeIgnition {
+		return db.ignDir()
+	}
+	return db.ciDir()
+}
+
+// detectInitType returns "ignition" if filename looks like a Butane file, else "cloudinit".
+func detectInitType(name string) string {
+	lower := strings.ToLower(name)
+	if strings.HasSuffix(lower, ".bu") || strings.HasSuffix(lower, ".butane") || strings.HasSuffix(lower, ".ign") {
+		return models.InitTypeIgnition
+	}
+	return models.InitTypeCloudInit
+}
 
 func readYAML(path string, v interface{}) error {
 	data, err := os.ReadFile(path)
@@ -68,26 +86,48 @@ func writeYAML(path string, v interface{}) error {
 }
 
 // ============================================================
-// Cloud-Init (directory of .yaml files)
+// Init Configs (cloud-init YAML in cloudinit/ + Butane in ignition/)
 // ============================================================
+// The legacy method names (CreateCloudInit, GetCloudInit, etc.) are preserved
+// for backward compat with callers; they now auto-route based on filename.
+
+// resolveInitPath returns (full path, init type) for an init config by name.
+// It checks both directories; if the file exists in ignition/, that wins,
+// otherwise falls back to cloudinit/.
+func (db *DB) resolveInitPath(name string) (string, string) {
+	if p := filepath.Join(db.ignDir(), name); fileExists(p) {
+		return p, models.InitTypeIgnition
+	}
+	if p := filepath.Join(db.ciDir(), name); fileExists(p) {
+		return p, models.InitTypeCloudInit
+	}
+	// Doesn't exist yet — pick the directory based on extension
+	return filepath.Join(db.initDir(detectInitType(name)), name), detectInitType(name)
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
 
 func (db *DB) CreateCloudInit(name, content string) (int64, error) {
-	p := filepath.Join(db.ciDir(), name)
-	if _, err := os.Stat(p); err == nil {
+	p, _ := db.resolveInitPath(name)
+	if fileExists(p) {
 		return 0, fmt.Errorf("insert cloudinit: UNIQUE constraint failed: %s", name)
 	}
 	return 0, os.WriteFile(p, []byte(content), 0644)
 }
 
 func (db *DB) GetCloudInit(name string) (*models.CloudInitConfig, error) {
-	p := filepath.Join(db.ciDir(), name)
+	p, t := db.resolveInitPath(name)
 	data, err := os.ReadFile(p)
 	if err != nil {
-		return nil, fmt.Errorf("get cloudinit %q: %w", name, err)
+		return nil, fmt.Errorf("get init %q: %w", name, err)
 	}
 	info, _ := os.Stat(p)
 	return &models.CloudInitConfig{
 		Name:      name,
+		Type:      t,
 		Content:   string(data),
 		CreatedAt: info.ModTime(),
 		UpdatedAt: info.ModTime(),
@@ -99,38 +139,57 @@ func (db *DB) GetCloudInitByID(name string) (*models.CloudInitConfig, error) {
 }
 
 func (db *DB) ListCloudInits() ([]models.CloudInitConfig, error) {
-	entries, err := os.ReadDir(db.ciDir())
-	if err != nil {
-		return nil, err
-	}
 	var configs []models.CloudInitConfig
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
+	// cloud-init configs
+	if entries, err := os.ReadDir(db.ciDir()); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+				continue
+			}
+			info, _ := e.Info()
+			configs = append(configs, models.CloudInitConfig{
+				Name:      e.Name(),
+				Type:      models.InitTypeCloudInit,
+				CreatedAt: info.ModTime(),
+				UpdatedAt: info.ModTime(),
+			})
 		}
-		info, _ := e.Info()
-		configs = append(configs, models.CloudInitConfig{
-			Name:      e.Name(),
-			CreatedAt: info.ModTime(),
-			UpdatedAt: info.ModTime(),
-		})
+	}
+	// ignition configs (Butane source files)
+	if entries, err := os.ReadDir(db.ignDir()); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			lower := strings.ToLower(e.Name())
+			if !strings.HasSuffix(lower, ".bu") && !strings.HasSuffix(lower, ".butane") {
+				continue
+			}
+			info, _ := e.Info()
+			configs = append(configs, models.CloudInitConfig{
+				Name:      e.Name(),
+				Type:      models.InitTypeIgnition,
+				CreatedAt: info.ModTime(),
+				UpdatedAt: info.ModTime(),
+			})
+		}
 	}
 	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
 	return configs, nil
 }
 
 func (db *DB) UpdateCloudInit(name, content string) error {
-	p := filepath.Join(db.ciDir(), name)
-	if _, err := os.Stat(p); os.IsNotExist(err) {
-		return fmt.Errorf("cloudinit %q not found", name)
+	p, _ := db.resolveInitPath(name)
+	if !fileExists(p) {
+		return fmt.Errorf("init %q not found", name)
 	}
 	return os.WriteFile(p, []byte(content), 0644)
 }
 
 func (db *DB) DeleteCloudInit(name string) error {
-	p := filepath.Join(db.ciDir(), name)
+	p, _ := db.resolveInitPath(name)
 	if err := os.Remove(p); err != nil {
-		return fmt.Errorf("cloudinit %q not found", name)
+		return fmt.Errorf("init %q not found", name)
 	}
 	return nil
 }
@@ -209,6 +268,13 @@ func (db *DB) UpdateTemplate(name string, updates map[string]interface{}) error 
 					templates[i].CloudInit = ""
 				} else {
 					templates[i].CloudInit = v.(string)
+				}
+			}
+			if v, ok := updates["init_type"]; ok {
+				if v == nil {
+					templates[i].InitType = ""
+				} else {
+					templates[i].InitType = v.(string)
 				}
 			}
 			return db.saveTemplates(templates)
@@ -597,6 +663,32 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 				return fmt.Errorf("write %s: %w", entry.Name(), err)
 			}
 		}
+
+		// Also import Butane (.bu) files from cloudinit/ignition subdirectory if present.
+		ignSrc := filepath.Join(cloudinitDir, "..", "ignition")
+		if entries, err := os.ReadDir(ignSrc); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				lower := strings.ToLower(entry.Name())
+				if !strings.HasSuffix(lower, ".bu") && !strings.HasSuffix(lower, ".butane") {
+					continue
+				}
+				src := filepath.Join(ignSrc, entry.Name())
+				content, err := os.ReadFile(src)
+				if err != nil {
+					return fmt.Errorf("read %s: %w", entry.Name(), err)
+				}
+				dst := filepath.Join(db.ignDir(), entry.Name())
+				if _, err := os.Stat(dst); err == nil && !force {
+					continue
+				}
+				if err := os.WriteFile(dst, content, 0644); err != nil {
+					return fmt.Errorf("write %s: %w", entry.Name(), err)
+				}
+			}
+		}
 	}
 
 	// Import build steps
@@ -625,6 +717,11 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 		}
 
 		for _, img := range images {
+			initType := img.InitType
+			if initType == "" {
+				// Infer from filename extension
+				initType = detectInitType(img.Vendor)
+			}
 			t := models.Template{
 				VMID:        img.ID,
 				Name:        img.Name,
@@ -632,6 +729,7 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 				ChecksumURL: img.ChecksumURL,
 				Tags:        img.Tags,
 				CloudInit:   img.Vendor,
+				InitType:    initType,
 			}
 			if idx, ok := existingNames[img.Name]; ok {
 				if force {

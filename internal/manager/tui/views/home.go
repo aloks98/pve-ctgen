@@ -25,7 +25,7 @@ type menuItem struct {
 
 var menuItems = []menuItem{
 	{"1", "Nodes", "Manage Proxmox nodes", 8},
-	{"2", "Cloud-Init", "Cloud-init configurations", 1},
+	{"2", "Init Configs", "Cloud-init / Ignition configs", 1},
 	{"3", "Templates", "VM template definitions", 2},
 	{"4", "Steps", "Build step commands", 3},
 	{"5", "History", "Past build results", 4},

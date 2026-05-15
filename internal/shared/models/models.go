@@ -10,6 +10,7 @@ type Image struct {
 	ChecksumURL string `json:"checksum_url"`
 	Tags        string `json:"tags"`
 	Vendor      string `json:"vendor"`
+	InitType    string `json:"init_type,omitempty"` // "cloudinit" (default) or "ignition"
 }
 
 // Step represents a command to be executed (from steps.json seed data).
@@ -18,13 +19,23 @@ type Step struct {
 	Command string `json:"command"`
 }
 
-// CloudInitConfig represents a stored cloud-init configuration.
-type CloudInitConfig struct {
-	Name      string    `yaml:"-" json:"name"`           // derived from filename
-	Content   string    `yaml:"-" json:"content"`        // file contents
+// Init type constants.
+const (
+	InitTypeCloudInit = "cloudinit"
+	InitTypeIgnition  = "ignition"
+)
+
+// InitConfig represents a stored init configuration (cloud-init YAML or Butane).
+type InitConfig struct {
+	Name      string    `yaml:"-" json:"name"`     // filename
+	Type      string    `yaml:"-" json:"type"`     // "cloudinit" or "ignition"
+	Content   string    `yaml:"-" json:"content"`  // file contents
 	CreatedAt time.Time `yaml:"-" json:"created_at"`
 	UpdatedAt time.Time `yaml:"-" json:"updated_at"`
 }
+
+// CloudInitConfig is an alias for InitConfig (back-compat).
+type CloudInitConfig = InitConfig
 
 // Template represents a VM template definition.
 type Template struct {
@@ -33,7 +44,19 @@ type Template struct {
 	URL         string `yaml:"url" json:"url"`
 	ChecksumURL string `yaml:"checksum_url,omitempty" json:"checksum_url"`
 	Tags        string `yaml:"tags,omitempty" json:"tags"`
-	CloudInit   string `yaml:"cloudinit,omitempty" json:"cloudinit"` // cloud-init filename
+	// CloudInit is the init config filename (e.g. "ubuntu.yaml" or "k8s-node.bu").
+	// Field name kept as `cloudinit` for backward compat with existing YAML stores.
+	CloudInit string `yaml:"cloudinit,omitempty" json:"cloudinit"`
+	// InitType is "cloudinit" (default) or "ignition".
+	InitType string `yaml:"init_type,omitempty" json:"init_type"`
+}
+
+// EffectiveInitType returns the init type, defaulting to "cloudinit" when empty.
+func (t Template) EffectiveInitType() string {
+	if t.InitType == "" {
+		return InitTypeCloudInit
+	}
+	return t.InitType
 }
 
 // BuildStep represents a build step definition.

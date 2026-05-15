@@ -446,6 +446,18 @@ func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
 
 func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname string, memory, cores int32, ipConfig, nameserver, searchDomain string, start, startAtBoot bool) tea.Cmd {
 	node := m.selectedNode
+
+	// Detect init type by looking up the template in the local store by VM ID.
+	initType := "cloudinit"
+	if templates, err := m.db.ListTemplates(); err == nil {
+		for _, t := range templates {
+			if t.VMID == int(templateID) {
+				initType = t.EffectiveInitType()
+				break
+			}
+		}
+	}
+
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -466,6 +478,7 @@ func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname str
 			Cores:        cores,
 			Nameserver:   nameserver,
 			SearchDomain: searchDomain,
+			InitType:     initType,
 		})
 		return vmLaunchResultMsg{resp: resp, err: err}
 	}

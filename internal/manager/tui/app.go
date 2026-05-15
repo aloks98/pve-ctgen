@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
+	"github.com/aloks98/pve-ctgen/internal/manager/initresolve"
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/components"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
@@ -354,15 +355,16 @@ func runBuildInBackground(db *store.DB, templates []models.Template, node models
 	for _, tmpl := range templates {
 		buildID := uuid.New().String()
 
-		// Resolve cloud-init content
-		var ciContent []byte
-		var ciFilename string
-		if tmpl.CloudInit != "" {
-			ci, err := db.GetCloudInitByID(tmpl.CloudInit)
-			if err == nil {
-				ciContent = []byte(ci.Content)
-				ciFilename = ci.Name
+		// Resolve init content (cloud-init YAML or Butane → Ignition JSON)
+		initType := tmpl.EffectiveInitType()
+		ciContent, ciFilename, err := initresolve.Resolve(db, tmpl)
+		if err != nil {
+			events <- &pb.BuildEvent{
+				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
+				BuildId: buildID,
+				Message: fmt.Sprintf("init config for %s: %v", tmpl.Name, err),
 			}
+			continue
 		}
 
 		db.CreateBuild(buildID, tmpl.Name, node.Name)
@@ -380,6 +382,7 @@ func runBuildInBackground(db *store.DB, templates []models.Template, node models
 			Steps:             pbSteps,
 			CloudinitContent:  ciContent,
 			CloudinitFilename: ciFilename,
+			InitType:          initType,
 		}
 
 		stream, err := client.Build(context.Background(), req)

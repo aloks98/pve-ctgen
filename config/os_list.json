@@ -1,6 +1,6 @@
 [
   {
-    "id": 8201,
+    "id": 9100,
     "name": "ubuntu2404",
     "url": "https://isoman.e412.in/images/ubuntu/24.04/x86_64/ubuntu-24.04-cloud-x86_64.img",
     "checksum_url": "https://isoman.e412.in/images/ubuntu/24.04/x86_64/ubuntu-24.04-cloud-x86_64.img.sha256",
@@ -8,7 +8,7 @@
     "vendor": "ubuntu.yaml"
   },
   {
-    "id": 8202,
+    "id": 9101,
     "name": "debian13",
     "url": "https://isoman.e412.in/images/debian/13/x86_64/debian-13-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/debian/13/x86_64/debian-13-cloud-x86_64.qcow2.sha512",
@@ -16,7 +16,7 @@
     "vendor": "debian.yaml"
   },
   {
-    "id": 8203,
+    "id": 9102,
     "name": "debian12",
     "url": "https://isoman.e412.in/images/debian/12/x86_64/debian-12-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/debian/12/x86_64/debian-12-cloud-x86_64.qcow2.sha512",
@@ -24,7 +24,7 @@
     "vendor": "debian.yaml"
   },
   {
-    "id": 8204,
+    "id": 9103,
     "name": "alma10",
     "url": "https://isoman.e412.in/images/alma-linux/10.1/x86_64/alma-linux-10.1-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/alma-linux/10.1/x86_64/alma-linux-10.1-cloud-x86_64.qcow2.sha256",
@@ -32,7 +32,7 @@
     "vendor": "almalinux.yaml"
   },
   {
-    "id": 8205,
+    "id": 9104,
     "name": "alma9",
     "url": "https://isoman.e412.in/images/alma-linux/9.7/x86_64/alma-linux-9.7-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/alma-linux/9.7/x86_64/alma-linux-9.7-cloud-x86_64.qcow2.sha256",
@@ -40,7 +40,7 @@
     "vendor": "almalinux.yaml"
   },
   {
-    "id": 8206,
+    "id": 9105,
     "name": "fedora43",
     "url": "https://isoman.e412.in/images/fedora/43/x86_64/fedora-43-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/fedora/43/x86_64/fedora-43-cloud-x86_64.qcow2.sha256",
@@ -48,7 +48,7 @@
     "vendor": "fedora.yaml"
   },
   {
-    "id": 8207,
+    "id": 9106,
     "name": "rocky10",
     "url": "https://isoman.e412.in/images/rocky-linux/10.1/x86_64/rocky-linux-10.1-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/rocky-linux/10.1/x86_64/rocky-linux-10.1-cloud-x86_64.qcow2.sha256",
@@ -56,12 +56,21 @@
     "vendor": "rocky.yaml"
   },
   {
-    "id": 8208,
+    "id": 9107,
     "name": "rocky9",
     "url": "https://isoman.e412.in/images/rocky-linux/9.7/x86_64/rocky-linux-9.7-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/rocky-linux/9.7/x86_64/rocky-linux-9.7-cloud-x86_64.qcow2.sha256",
     "tags": "rocky-template,9,cloudinit",
     "vendor": "rocky.yaml"
+  },
+  {
+    "id": 9200,
+    "name": "flatcar-k8s",
+    "url": "https://isoman.e412.in/images/flatcar-linux/4593.2.1/x86_64/flatcar-linux-4593.2.1-proxmox-x86_64.img",
+    "checksum_url": "",
+    "tags": "flatcar-template,k8s,ignition",
+    "vendor": "flatcar-k8s.bu",
+    "init_type": "ignition"
   }
 ]
     

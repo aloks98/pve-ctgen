@@ -39,26 +39,34 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 		}
 	}
 
-	// Validate and write cloud-init config
+	// Write init config (cloud-init YAML or Ignition JSON).
+	// For ignition, the content is already transpiled JSON; we skip YAML validation.
 	if len(req.CloudinitContent) > 0 && req.CloudinitFilename != "" {
-		if err := cloudinit.Validate(string(req.CloudinitContent)); err != nil {
-			sendEvent(&pb.BuildEvent{
-				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
-				Message: fmt.Sprintf("invalid cloud-init YAML: %v", err),
-			})
-			return
+		isIgnition := req.InitType == "ignition"
+		if !isIgnition {
+			if err := cloudinit.Validate(string(req.CloudinitContent)); err != nil {
+				sendEvent(&pb.BuildEvent{
+					Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
+					Message: fmt.Sprintf("invalid cloud-init YAML: %v", err),
+				})
+				return
+			}
 		}
 		ciPath := filepath.Join(cfg.SnippetsPath, req.CloudinitFilename)
 		if err := os.WriteFile(ciPath, req.CloudinitContent, 0644); err != nil {
 			sendEvent(&pb.BuildEvent{
 				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
-				Message: fmt.Sprintf("write cloud-init failed: %v", err),
+				Message: fmt.Sprintf("write init config failed: %v", err),
 			})
 			return
 		}
+		label := "cloud-init"
+		if isIgnition {
+			label = "ignition"
+		}
 		sendEvent(&pb.BuildEvent{
 			Type:    pb.BuildEventType_BUILD_EVENT_TYPE_LOG,
-			Message: fmt.Sprintf("Wrote cloud-init config to %s", ciPath),
+			Message: fmt.Sprintf("Wrote %s config to %s", label, ciPath),
 		})
 	}
 

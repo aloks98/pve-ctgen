@@ -1,20 +1,26 @@
 #cloud-config
+hostname: ubuntu
 preserve_hostname: false
 manage_etc_hosts: true
 package_upgrade: true
-locale: en_US.UTF-8
 timezone: Asia/Kolkata
 
-# Configure apt proxy BEFORE package installation
-apt:
-  proxy: "http://192.168.150.1:3142"
-  https_proxy: "http://192.168.150.1:3142"
+ssh_deletekeys: true
+ssh_genkeytypes:
+  - rsa
+  - ecdsa
+  - ed25519
 
+# APT proxy config
+apt:
+  proxy: http://192.168.150.1:3142
+  https_proxy: http://192.168.150.1:3142
+
+# Users
 users:
   - name: root
     lock_passwd: false
-    passwd: $6$8556df47c6324b80$RqcOZ/wVURwlPLThhY7rVrjV4/1EzsYROgxFTHOY9HJSvFgOtUuTZoLMh69foON7TzONkq35PAger1v47KTvs1
-    shell: /bin/zsh
+    shell: /usr/bin/fish
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFzsZwR43Gm8vUkx9s3aJl3mcmCJ8tl5x0S+GazG0iDV aloksahoo@mac
       - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCSP1eJuWZCZ4lz6kbTjWBzz/75mmFZ1ePODp/BVBQRCqg2945MlsbGSiUeNfEDzXCzJO4b2csMb9pBQUQ06MpLisv0yuZdNzVPX6ytMwp3FD85uDyerbPhjPGR3urSMt31TjvPNM61PPZcvxzRjr/tkk3kjFWNf6uNW38axsoGQFDMcMnEdM9SiGfFeTVews9SC+OU0mEE7/A4Iiq7fX4nqLdFyC7n8MGoLnAyRdwFTspQK2PxhJbOoJKZCAYnfnsTPm+owY5+zCnghESVZn+WU5LRAkkXs4JIUXxDrDwRZhupMPAPC013zJJ4SQx2yKaspRm8fsqmbDQS2Dt9BVAVnNb44++gL7h5LseOvpVV46Ovaz9SaCI7nB04hBeJErM4auP8Hd+SI7cJtJDMtSKnzlEI7NxDm1myqvXDQpnupxCHaxE+4QYFJ7SjWgH1ToFDhHe7VDjEFmNnGWdggdGQzFW3OLkkgPupORvoak5TVca0U4QQqOqVFTom0px1hDx4roYT7lMw1VmDxRk8ajFiaoNWa7EDGnbyIJIGxa7sXPD5qHE79vxhe0LDb5/Bc++6Pv1gZroMLeNzISj35wp6tfc94LGf+eXqdnTr+0psa5/NF4UzuMJwNzRt1ZDkJSifysaIs89ODD5wZa7CCDS14dHBNUwRqSOf2Z/2Ksa0+Q== root@tokyo
@@ -24,18 +30,24 @@ users:
     gecos: Alok Sahoo
     groups: sudo, docker
     sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: false
-    shell: /bin/zsh
-    passwd: $6$8556df47c6324b80$RqcOZ/wVURwlPLThhY7rVrjV4/1EzsYROgxFTHOY9HJSvFgOtUuTZoLMh69foON7TzONkq35PAger1v47KTvs1
+    shell: /usr/bin/fish
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFzsZwR43Gm8vUkx9s3aJl3mcmCJ8tl5x0S+GazG0iDV aloksahoo@mac
       - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCSP1eJuWZCZ4lz6kbTjWBzz/75mmFZ1ePODp/BVBQRCqg2945MlsbGSiUeNfEDzXCzJO4b2csMb9pBQUQ06MpLisv0yuZdNzVPX6ytMwp3FD85uDyerbPhjPGR3urSMt31TjvPNM61PPZcvxzRjr/tkk3kjFWNf6uNW38axsoGQFDMcMnEdM9SiGfFeTVews9SC+OU0mEE7/A4Iiq7fX4nqLdFyC7n8MGoLnAyRdwFTspQK2PxhJbOoJKZCAYnfnsTPm+owY5+zCnghESVZn+WU5LRAkkXs4JIUXxDrDwRZhupMPAPC013zJJ4SQx2yKaspRm8fsqmbDQS2Dt9BVAVnNb44++gL7h5LseOvpVV46Ovaz9SaCI7nB04hBeJErM4auP8Hd+SI7cJtJDMtSKnzlEI7NxDm1myqvXDQpnupxCHaxE+4QYFJ7SjWgH1ToFDhHe7VDjEFmNnGWdggdGQzFW3OLkkgPupORvoak5TVca0U4QQqOqVFTom0px1hDx4roYT7lMw1VmDxRk8ajFiaoNWa7EDGnbyIJIGxa7sXPD5qHE79vxhe0LDb5/Bc++6Pv1gZroMLeNzISj35wp6tfc94LGf+eXqdnTr+0psa5/NF4UzuMJwNzRt1ZDkJSifysaIs89ODD5wZa7CCDS14dHBNUwRqSOf2Z/2Ksa0+Q== root@tokyo
       - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC1Mx+9qMZxwA6OVSeBDMQS70xe+vCzTeOtc0kDfzsOP744GZtKGPwPDlNoGoNc+fOzomPpLtzNCl8hQ1gUWW4nhSwEeFwTyUcz4gl/+/pNcfzdLy1xcXB18oJk+BoFBLBdiEru5DCs66G3B7MlDHKzu0z7QpVt/GgZyA5qn3Re6dUhWGqXfS2hBjG/H4AM0J1TlEYvcOE0E5GRu+UQOZkwAFYBHeji1VJfWIpbv+K2tbMKnpr+sJDzS3GTcRh8CVeGU0rQu4dqXBij/a4uNyIuRac9BsiPJ3bA5LR2q2PQHgpIlQJOFFnEwmwkgZ3++TZb/YvhepigViJVUoPXqPpcpaWYE/nt4ygr0dVfxGMrRqtZB+WCpEOev3SBcqlXgDym5Uhx4aAiYbVppsw9+p+YGNgAA7o+GI78R0CLZ073frsJlBmwjbxnYLaDDGUXAzWBFoW23mzfFXPz78tHD6rLXGdWgUktC3bUJrGQf9zYljQzAITAMSW8dpyiDK2Bq3MRUjz1gCdFZ6pNqrfy+vp4i7eBOkCAsIgETG+RYZv5u5VrqLOqkiJUqU32j/94n2WkNG6AWewR6ZurdUylhz3ToV0TXkJP0mCFD7kEPCxFVHc3DoP13rMzgnPaJl+snDC9BT25swb1xn8W+jQPpSwtbHw8vQcybP3vFFnczTVrmw== root@osaka
       - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCarFCxjxX/8j6dTbh22ck1ZGFk3HG2AslEvHtVSwXaYE6hBOckIEPJDFWYKsVRQ80ksh+AgVQPmWVSiFfA5LUIAjYDyaRYFQjZ00Ke/29nrkfC25sbRwLl9R0EkWUw0AySDmUfkEowM3EZJvkCYhSsjx1uKinoDx5VLir2qE5sesSqTxhOi604m/3Pk8EAKzjU+w3h7Odbh3psSy+yocryzsgftOIygoH0zmXysCDv6HFrH4C6SFHsTbWJ+YKe3GOwbwA0e+5g5jL25WjINhx/PVt7Sd8OBiktKb0VeCQmX6x9wgfpN4iZszZXSNsPJFZLccBevK6rK+3DUAt1D58hQ93xXLnYCdGbMJKkyZOnIEo68U2FGFYxdoM3tnsiYXGrL1/JDD28SaPXaCfU5OG+U0OlMGaWJotPp6GzaYLMG5PcTIJlYfQAr0AHQ111NUa12ii4hhgZEnLX5bnw54w360PsTQE9FvoggTWII5fYob4B5KRolOTx2G7YCiPHFggiKEemKkCMyJX6JmfqN2mHAQeL6qpTgXjuunWmz3bMFUIZthAnbHWn6V03vI07dITNFrW1DNOSSvJ7+jgpj2yddlnrQPiGkcef1nltY+ErFXhdjP9zyNC7KEbpwMA5w9DcUOrTx5snTL5z392+z3eB88O0qtycNldYg2h2QZKSnQ== root@kyoto
 
+# Password
+chpasswd:
+  expire: false
+  list: |
+    root:$6$wjysdlWLd696fDE3$1C2wRX2FMU1gOZrO7Yc.YkIjWbQCVaU1IwyFGPJDOSZSUJ4rvF.013M060MTYkGc9MTw4fmtrB3lyKspzOi5p/
+    aloks98:$6$wjysdlWLd696fDE3$1C2wRX2FMU1gOZrO7Yc.YkIjWbQCVaU1IwyFGPJDOSZSUJ4rvF.013M060MTYkGc9MTw4fmtrB3lyKspzOi5p/
+
 groups:
   - docker
 
+# Packages
 packages:
   - qemu-guest-agent
   - ca-certificates
@@ -44,90 +56,56 @@ packages:
   - lsb-release
   - software-properties-common
   - locales
-  # Shell
-  - zsh
-  - zsh-autosuggestions
-  - zsh-syntax-highlighting
-  # Common tools
+  - fish
   - htop
+  - btop
   - vim
   - tmux
   - jq
   - tree
   - unzip
-  # Homebrew dependencies
   - build-essential
   - procps
   - file
   - git
-  # MOTD
   - figlet
   - lolcat
   - fortune-mod
   - cowsay
 
+# Files
 write_files:
-  - path: /etc/zsh/zshrc.local
+  - path: /etc/fish/conf.d/custom.fish
     permissions: "0644"
     content: |
-      autoload -Uz compinit && compinit
-      zstyle ':completion:*' menu select
-      zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
-      zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
-      zstyle ':completion:*:descriptions' format '%F{yellow}── %d ──%f'
-      zstyle ':completion:*' group-name ''
-      HISTFILE=~/.zsh_history
-      HISTSIZE=50000
-      SAVEHIST=50000
-      setopt SHARE_HISTORY HIST_IGNORE_ALL_DUPS HIST_REDUCE_BLANKS HIST_VERIFY INC_APPEND_HISTORY EXTENDED_HISTORY
-      setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT CORRECT INTERACTIVE_COMMENTS NO_BEEP
-      bindkey -e
-      bindkey '^[[A' history-search-backward
-      bindkey '^[[B' history-search-forward
-      bindkey '^[[H' beginning-of-line
-      bindkey '^[[F' end-of-line
-      bindkey '^[[3~' delete-char
-      bindkey '^[^[[D' backward-word
-      bindkey '^[^[[C' forward-word
-      if [[ $EUID -eq 0 ]]; then
-        PROMPT='%F{red}%n%f@%F{yellow}%m%f:%F{blue}%~%f# '
-      else
-        PROMPT='%F{green}%n%f@%F{yellow}%m%f:%F{blue}%~%f$ '
-      fi
-      RPROMPT='%F{242}%*%f'
-      alias ..='cd ..' ...='cd ../..'
-      alias ll='ls -lAhF --color=auto' la='ls -A --color=auto' l='ls -CF --color=auto'
-      alias gs='git status' gl='git log --oneline -20' gd='git diff' gp='git pull'
+      # Aliases
+      alias ..='cd ..'
+      alias ...='cd ../..'
+      alias ll='ls -lAhF --color=auto'
+      alias la='ls -A --color=auto'
+      alias l='ls -CF --color=auto'
+      alias gs='git status'
+      alias gl='git log --oneline -20'
+      alias gd='git diff'
+      alias gp='git pull'
       alias dc='docker compose'
-      alias dps='docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
-      alias dpsa='docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
-      alias dlogs='docker logs -f' dex='docker exec -it'
-      alias ports='ss -tulnp' df='df -hT' free='free -h'
-      alias myip='hostname -I | awk "{print \$1}"' reload='source ~/.zshrc'
-      alias rm='rm -i' cp='cp -i' mv='mv -i'
-      [[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]] && source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
-      [[ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]] && source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-      [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      alias dps='docker ps'
+      alias dpsa='docker ps -a'
+      alias dlogs='docker logs -f'
+      alias dex='docker exec -it'
+      alias ports='ss -tulnp'
+      alias myip='hostname -I | awk "{print $1}"'
+
       # MOTD on login
-      if [[ -o login && -f /etc/profile.d/motd.sh ]]; then source /etc/profile.d/motd.sh; fi
-
-  - path: /root/.zshrc
-    permissions: "0644"
-    owner: root:root
-    content: |
-      source /etc/zsh/zshrc.local
-
-  - path: /home/aloks98/.zshrc
-    permissions: "0644"
-    owner: aloks98:aloks98
-    content: |
-      source /etc/zsh/zshrc.local
+      if status is-interactive
+          bash /etc/profile.d/motd.sh
+      end
 
   - path: /etc/profile.d/motd.sh
     permissions: "0755"
     content: |
       #!/bin/sh
-      case "$-" in *i*) ;; *) return ;; esac
+      # Called explicitly from fish config
       printf '\033[1;34m'
       if [ -x /usr/bin/figlet ] && [ -x /usr/bin/lolcat ]; then
         /usr/bin/figlet -f standard "e412.in" | /usr/bin/lolcat
@@ -148,9 +126,6 @@ write_files:
       if command -v docker >/dev/null 2>&1; then
         echo "Docker: $(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',')"
         echo "Containers: $(docker ps -q 2>/dev/null | wc -l) running / $(docker ps -aq 2>/dev/null | wc -l) total"
-      fi
-      if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
-        echo "Homebrew: $(/home/linuxbrew/.linuxbrew/bin/brew --version 2>/dev/null | head -1 | cut -d' ' -f2)"
       fi
       echo "Uptime: $(uptime -p)"
       echo "Disk: $(df -h / | awk 'NR==2 {print $3 "/" $2 " (" $5 " used)"}')"
@@ -188,16 +163,17 @@ write_files:
     content: |
       AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
 
+# Commands
 runcmd:
-  # Set zsh as default shell for root
-  - chsh -s /bin/zsh root
-  # Generate locales (en_US for system default, en_IN for SSH client compatibility)
+  - chsh -s /usr/bin/fish root
+  - curl -fsSL https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install -o /tmp/omf-install.fish
+  - fish /tmp/omf-install.fish --noninteractive --yes
+  - sudo -u aloks98 fish /tmp/omf-install.fish --noninteractive --yes
+  - rm -f /tmp/omf-install.fish
   - sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
   - sed -i 's/^# *en_IN.UTF-8 UTF-8/en_IN.UTF-8 UTF-8/' /etc/locale.gen
   - locale-gen
   - update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-
-  # Install Docker
   - install -m 0755 -d /etc/apt/keyrings
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   - chmod a+r /etc/apt/keyrings/docker.asc
@@ -205,26 +181,10 @@ runcmd:
   - apt-get update
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - systemctl enable --now docker
-
-  # Configure Docker permissions
   - usermod -aG docker root
   - usermod -aG docker aloks98
-
-  # Configure system services
   - systemctl enable --now qemu-guest-agent || true
-
-  # Fix ownership of aloks98 .zshrc
-  - chown aloks98:aloks98 /home/aloks98/.zshrc
-
-  # Install Homebrew for aloks98
-  - sudo -u aloks98 bash -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-  - sudo -u aloks98 bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew analytics off'
-  - sudo -u aloks98 bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew install lazydocker btop'
-
-  # Lock password login for aloks98
-  - passwd -l aloks98
-
-  # Configure SSH MOTD
+  - chown -R aloks98:aloks98 /home/aloks98
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
   - sed -i 's/^session.*pam_motd.so.*$/#&/' /etc/pam.d/sshd
   - rm -f /etc/update-motd.d/*
@@ -233,4 +193,4 @@ runcmd:
   - chmod 644 /etc/motd
   - systemctl restart sshd
 
-final_message: "Cloud-init completed in $UPTIME seconds"
+final_message: Cloud-init completed in $UPTIME seconds

@@ -49,9 +49,9 @@ func newCloudInitListCmd() *cobra.Command {
 			}
 
 			w := newTabWriter()
-			fmt.Fprintln(w, "NAME\tCREATED\tUPDATED")
+			fmt.Fprintln(w, "NAME\tTYPE\tUPDATED")
 			for _, c := range configs {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", c.Name, c.CreatedAt.Format("2006-01-02"), c.UpdatedAt.Format("2006-01-02"))
+				fmt.Fprintf(w, "%s\t%s\t%s\n", c.Name, c.Type, c.UpdatedAt.Format("2006-01-02"))
 			}
 			return w.Flush()
 		},

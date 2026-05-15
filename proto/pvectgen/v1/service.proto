@@ -29,9 +29,13 @@ message BuildRequest {
   string build_id = 1;
   Image image = 2;
   repeated BuildStep steps = 3;
+  // init_content carries either cloud-init YAML or Ignition JSON bytes.
   bytes cloudinit_content = 4;
+  // init_filename: destination filename in /var/lib/vz/snippets/ (e.g. "ubuntu.yaml" or "k8s-node.ign").
   string cloudinit_filename = 5;
   map<string, string> options = 6;
+  // init_type: "cloudinit" (default) or "ignition".
+  string init_type = 7;
 }
 
 message BuildEvent {
@@ -76,6 +80,8 @@ message LaunchVMRequest {
   string hostname = 9;
   string nameserver = 10;
   string search_domain = 11;
+  // init_type: "cloudinit" (default) or "ignition". Affects how hostname/network is applied.
+  string init_type = 12;
 }
 
 message LaunchVMResponse {

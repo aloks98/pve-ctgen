@@ -96,7 +96,8 @@ func (m *TemplatesModel) newTemplateForm(isEdit bool) components.Form {
 		{Label: "URL", Placeholder: "https://...", Required: true},
 		{Label: "Checksum URL", Placeholder: "https://... (optional)"},
 		{Label: "Tags", Placeholder: "ubuntu,cloudinit"},
-		{Label: "CloudInit", Placeholder: "cloud-init config name (optional)"},
+		{Label: "Init Config", Placeholder: "ubuntu.yaml or k8s-node.bu (optional)"},
+		{Label: "Init Type", Placeholder: "cloudinit or ignition (default: auto from extension)"},
 	})
 }
 
@@ -134,7 +135,10 @@ func (m TemplatesModel) Update(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 					m.form.SetValue("Checksum URL", t.ChecksumURL)
 					m.form.SetValue("Tags", t.Tags)
 					if t.CloudInit != "" {
-						m.form.SetValue("CloudInit", t.CloudInit)
+						m.form.SetValue("Init Config", t.CloudInit)
+					}
+					if t.InitType != "" {
+						m.form.SetValue("Init Type", t.InitType)
 					}
 					m.mode = tmplModeEdit
 					return m, m.form.Fields[0].BlinkCmd()
@@ -152,8 +156,9 @@ func (m TemplatesModel) Update(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 					fmt.Fprintf(&detail, "  Checksum URL:  %s\n", t.ChecksumURL)
 					fmt.Fprintf(&detail, "  Tags:          %s\n", t.Tags)
 					if t.CloudInit != "" {
-						fmt.Fprintf(&detail, "  CloudInit:     %s\n", t.CloudInit)
+						fmt.Fprintf(&detail, "  Init Config:   %s\n", t.CloudInit)
 					}
+					fmt.Fprintf(&detail, "  Init Type:     %s\n", t.EffectiveInitType())
 					m.detail = detail.String()
 					m.mode = tmplModeShow
 				}
@@ -185,7 +190,8 @@ func (m TemplatesModel) updateFormMode(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 		url := m.form.Value("URL")
 		checksumURL := m.form.Value("Checksum URL")
 		tags := m.form.Value("Tags")
-		ciName := m.form.Value("CloudInit")
+		ciName := m.form.Value("Init Config")
+		initType := strings.TrimSpace(m.form.Value("Init Type"))
 
 		if name == "" || url == "" {
 			m.statusMsg = "Name and URL are required"
@@ -220,6 +226,7 @@ func (m TemplatesModel) updateFormMode(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 				ChecksumURL: checksumURL,
 				Tags:        tags,
 				CloudInit:   ciName,
+				InitType:    initType,
 			}
 			if _, err := m.db.CreateTemplate(t); err != nil {
 				m.statusMsg = fmt.Sprintf("Error: %v", err)
@@ -236,6 +243,7 @@ func (m TemplatesModel) updateFormMode(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 				"checksum_url": checksumURL,
 				"tags":         tags,
 				"cloudinit":    ciName,
+				"init_type":    initType,
 			}
 			if err := m.db.UpdateTemplate(m.editName, updates); err != nil {
 				m.statusMsg = fmt.Sprintf("Error: %v", err)

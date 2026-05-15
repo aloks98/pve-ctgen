@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -102,8 +103,46 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 		}, nil
 	}
 
+	isIgnition := req.InitType == "ignition"
+
 	// Apply config overrides
 	setArgs := []string{"set", fmt.Sprintf("%d", req.NewVmId)}
+
+	// For cloud-init VMs, write a per-VM meta-data snippet with hostname.
+	// For Ignition (Flatcar), hostname is set inside the Butane config.
+	if !isIgnition {
+		vmHostname := req.Name
+		if req.Hostname != "" {
+			if parts := strings.SplitN(req.Hostname, ".", 2); len(parts) >= 1 {
+				vmHostname = parts[0]
+			}
+		}
+		metaSnippet := fmt.Sprintf("vm-%d-meta.yaml", req.NewVmId)
+		metaPath := fmt.Sprintf("%s/%s", s.cfg.SnippetsPath, metaSnippet)
+		metaContent := fmt.Sprintf("instance-id: %d\nlocal-hostname: %s\n", req.NewVmId, vmHostname)
+		if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+			log.Printf("write meta-data snippet failed: %v", err)
+		}
+
+		// Get current cicustom value and append meta snippet
+		cicustomOut, _ := exec.Command("bash", "-c",
+			fmt.Sprintf("qm config %d | grep cicustom | cut -d' ' -f2-", req.NewVmId)).Output()
+		cicustom := strings.TrimSpace(string(cicustomOut))
+		if cicustom != "" {
+			parts := strings.Split(cicustom, ",")
+			var filtered []string
+			for _, p := range parts {
+				if !strings.HasPrefix(strings.TrimSpace(p), "meta=") {
+					filtered = append(filtered, strings.TrimSpace(p))
+				}
+			}
+			cicustom = strings.Join(filtered, ",")
+			cicustom += fmt.Sprintf(",meta=local:snippets/%s", metaSnippet)
+		} else {
+			cicustom = fmt.Sprintf("meta=local:snippets/%s", metaSnippet)
+		}
+		setArgs = append(setArgs, "--cicustom", cicustom)
+	}
 	if req.Memory > 0 {
 		setArgs = append(setArgs, "--memory", fmt.Sprintf("%d", req.Memory))
 	}
@@ -113,16 +152,10 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 	if req.IpConfig != "" {
 		setArgs = append(setArgs, "--ipconfig0", req.IpConfig)
 	}
-	// Proxmox cloud-init uses VM name as hostname.
-	// If hostname contains a dot (FQDN like "web.e412.in"), split into name + searchdomain.
+	// If hostname is a FQDN, extract searchdomain from it
 	if req.Hostname != "" {
-		if parts := strings.SplitN(req.Hostname, ".", 2); len(parts) == 2 {
-			setArgs = append(setArgs, "--name", parts[0])
-			if req.SearchDomain == "" {
-				setArgs = append(setArgs, "--searchdomain", parts[1])
-			}
-		} else {
-			setArgs = append(setArgs, "--name", req.Hostname)
+		if parts := strings.SplitN(req.Hostname, ".", 2); len(parts) == 2 && req.SearchDomain == "" {
+			setArgs = append(setArgs, "--searchdomain", parts[1])
 		}
 	}
 	if req.Nameserver != "" {
@@ -157,6 +190,7 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 				Message: fmt.Sprintf("start failed: %v\n%s", err, string(out)),
 			}, nil
 		}
+
 	}
 
 	return &pb.LaunchVMResponse{

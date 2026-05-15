@@ -14,6 +14,7 @@ import (
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 	"github.com/aloks98/pve-ctgen/internal/shared/cloudinit"
 	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
+	"github.com/aloks98/pve-ctgen/internal/shared/ignition"
 )
 
 type ciMode int
@@ -23,6 +24,12 @@ const (
 	ciModeView
 	ciModeAdd // name form phase
 )
+
+// isButane returns true if the filename suggests a Butane source file.
+func isButane(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".bu") || strings.HasSuffix(lower, ".butane")
+}
 
 // editorFinishedMsg is sent when the external editor exits.
 type editorFinishedMsg struct {
@@ -51,8 +58,8 @@ type CloudInitModel struct {
 // NewCloudInitModel creates a new CloudInitModel.
 func NewCloudInitModel(db *store.DB) CloudInitModel {
 	t := components.NewTable(
-		[]string{"NAME", "CREATED", "UPDATED"},
-		[]int{25, 15, 15},
+		[]string{"NAME", "TYPE", "UPDATED"},
+		[]int{25, 12, 15},
 	)
 	return CloudInitModel{table: t, db: db}
 }
@@ -82,7 +89,7 @@ func (m *CloudInitModel) Refresh() {
 	rows := make([][]string, len(configs))
 	m.names = make([]string, len(configs))
 	for i, c := range configs {
-		rows[i] = []string{c.Name, c.CreatedAt.Format("2006-01-02"), c.UpdatedAt.Format("2006-01-02")}
+		rows[i] = []string{c.Name, c.Type, c.UpdatedAt.Format("2006-01-02")}
 		m.names[i] = c.Name
 	}
 	m.table.SetRows(rows)
@@ -142,8 +149,8 @@ func (m CloudInitModel) Update(msg tea.Msg) (CloudInitModel, tea.Cmd) {
 				}
 			}
 		case "a":
-			m.nameInput = components.NewForm("Add Cloud-Init Config", []components.FormField{
-				{Label: "Name", Placeholder: "e.g. ubuntu.yaml", Required: true},
+			m.nameInput = components.NewForm("Add Init Config", []components.FormField{
+				{Label: "Name", Placeholder: "ubuntu.yaml (cloud-init) or k8s.bu (ignition)", Required: true},
 			})
 			m.mode = ciModeAdd
 			return m, m.nameInput.Fields[0].BlinkCmd()
@@ -189,8 +196,13 @@ func (m CloudInitModel) updateAddMode(msg tea.Msg) (CloudInitModel, tea.Cmd) {
 			m.nameInput.Submitted = false
 			return m, nil
 		}
-		// Open editor with a cloud-config template
-		template := "#cloud-config\n# " + name + "\n\n"
+		// Open editor with a starter template based on extension
+		var template string
+		if isButane(name) {
+			template = "variant: flatcar\nversion: 1.0.0\n\n# " + name + "\n\n"
+		} else {
+			template = "#cloud-config\n# " + name + "\n\n"
+		}
 		m.mode = ciModeList // reset mode before exec
 		return m, m.openEditor(name, template, true)
 	}
@@ -200,7 +212,11 @@ func (m CloudInitModel) updateAddMode(msg tea.Msg) (CloudInitModel, tea.Cmd) {
 // openEditor writes content to a temp file and launches $EDITOR (default: nvim).
 func (m CloudInitModel) openEditor(name, content string, isNew bool) tea.Cmd {
 	return func() tea.Msg {
-		tmpFile, err := os.CreateTemp("", "pvectgen-*.yaml")
+		pattern := "pvectgen-*.yaml"
+		if isButane(name) {
+			pattern = "pvectgen-*.bu"
+		}
+		tmpFile, err := os.CreateTemp("", pattern)
 		if err != nil {
 			return editorFinishedMsg{err: fmt.Errorf("create temp file: %w", err), name: name, isNew: isNew}
 		}
@@ -265,11 +281,20 @@ func (m CloudInitModel) handleEditorDone(msg editorDoneMsg) (CloudInitModel, tea
 		return m, nil
 	}
 
-	// Validate YAML
-	warnings, verr := cloudinit.ValidateStrict(contentStr)
-	if verr != nil {
-		m.statusMsg = fmt.Sprintf("Invalid YAML: %v — not saved", verr)
-		return m, nil
+	// Validate — Butane for ignition files, cloud-init YAML otherwise
+	var warnings []string
+	if isButane(msg.name) {
+		if err := ignition.Validate([]byte(contentStr)); err != nil {
+			m.statusMsg = fmt.Sprintf("Invalid Butane: %v — not saved", err)
+			return m, nil
+		}
+	} else {
+		var verr error
+		warnings, verr = cloudinit.ValidateStrict(contentStr)
+		if verr != nil {
+			m.statusMsg = fmt.Sprintf("Invalid YAML: %v — not saved", verr)
+			return m, nil
+		}
 	}
 
 	if msg.isNew {
