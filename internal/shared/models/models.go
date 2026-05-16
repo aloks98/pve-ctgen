@@ -1,6 +1,23 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// HasTag reports whether the Proxmox tag string contains want
+// (case-insensitive). Proxmox tag strings vary in separator depending on
+// source, so comma, semicolon and whitespace are all treated as delimiters.
+func HasTag(tags, want string) bool {
+	for _, t := range strings.FieldsFunc(tags, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' '
+	}) {
+		if strings.EqualFold(strings.TrimSpace(t), want) {
+			return true
+		}
+	}
+	return false
+}
 
 // Image represents a cloud image to be processed (from os_list.json seed data).
 type Image struct {

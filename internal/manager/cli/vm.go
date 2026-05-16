@@ -6,6 +6,7 @@ import (
 	"time"
 
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
+	"github.com/aloks98/pve-ctgen/internal/shared/models"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 	"github.com/spf13/cobra"
 )
@@ -60,13 +61,28 @@ func newVMLaunchCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			// Detect init type from local store by VM ID
-			initType := "cloudinit"
-			if templates, err := db.ListTemplates(); err == nil {
-				for _, t := range templates {
-					if t.VMID == templateID {
-						initType = t.EffectiveInitType()
+			// Detect init type. Prefer the template's tags as reported by the
+			// node (authoritative — template VM IDs on the node rarely match
+			// os_list seed IDs). Fall back to the local store for older
+			// templates that predate the `ignition` tag.
+			initType := models.InitTypeCloudInit
+			if nodeTmpls, err := client.ListTemplates(ctx); err == nil {
+				for _, t := range nodeTmpls.Templates {
+					if int(t.VmId) == templateID {
+						if models.HasTag(t.Tags, models.InitTypeIgnition) {
+							initType = models.InitTypeIgnition
+						}
 						break
+					}
+				}
+			}
+			if initType == models.InitTypeCloudInit {
+				if templates, err := db.ListTemplates(); err == nil {
+					for _, t := range templates {
+						if t.VMID == templateID {
+							initType = t.EffectiveInitType()
+							break
+						}
 					}
 				}
 			}
