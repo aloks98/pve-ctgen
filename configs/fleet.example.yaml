@@ -8,15 +8,20 @@ name: k8s-prod
 
 # Fleet-wide defaults; any field can be overridden per group.
 defaults:
-  template: flatcar-k8s     # template NAME (resolved to the node's VM ID)
+  template: flatcar-k8s     # template NAME (resolved to each node's VM ID)
   cores: 4
   memory: 4096
-  ip: ip=dhcp               # ipconfig0 string; or "ip=10.0.0.10/24,gw=10.0.0.1"
+  ip: ip=dhcp               # count-mode default ipconfig0
+  cidr: "16"                # prefix applied to bare hosts-mode IPs
+  gateway: 192.168.0.1      # gw applied to bare hosts-mode IPs
   start: true
   start_at_boot: true
   overwrite: false          # false = skip if VM ID exists; true = destroy+recreate
 
+# A group is EITHER count-based (count + vmid_start + node/nodes + spread +
+# hostname) OR explicit (hosts: [...]). Mix groups of both kinds freely.
 groups:
+  # Count-based: auto-expand N VMs, optionally spread across nodes.
   - role: control-plane
     count: 3
     node: rack-1            # single node: all 3 here
@@ -30,3 +35,11 @@ groups:
     vmid_start: 110         # -> 110..115, spread 2 per node
     hostname: k8s-worker
     memory: 8192            # override the default for workers
+
+  # Explicit hosts: distinct node / vmid / hostname / static IP per VM.
+  # `ip` may be a bare address (cidr+gateway from defaults are applied) or
+  # a full ipconfig0 string ("ip=10.0.0.5/24,gw=10.0.0.1" / "ip=dhcp").
+  - role: edge
+    hosts:
+      - {node: tokyo, vmid: 201, hostname: edge-tokyo, ip: 192.168.160.50}
+      - {node: osaka, vmid: 202, hostname: edge-osaka, ip: 192.168.160.51}

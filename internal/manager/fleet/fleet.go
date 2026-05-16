@@ -5,6 +5,7 @@ package fleet
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,7 +23,9 @@ type Settings struct {
 	Template     string `yaml:"template,omitempty"`
 	Cores        int32  `yaml:"cores,omitempty"`
 	Memory       int32  `yaml:"memory,omitempty"`
-	IP           string `yaml:"ip,omitempty"` // ipconfig0 string; default "ip=dhcp"
+	IP           string `yaml:"ip,omitempty"` // count-mode ipconfig0; default "ip=dhcp"
+	CIDR         string `yaml:"cidr,omitempty"`     // prefix for hosts-mode bare IPs, e.g. "16"
+	Gateway      string `yaml:"gateway,omitempty"`  // gw for hosts-mode bare IPs
 	Nameserver   string `yaml:"nameserver,omitempty"`
 	SearchDomain string `yaml:"search_domain,omitempty"`
 	Start        *bool  `yaml:"start,omitempty"`
@@ -30,16 +33,28 @@ type Settings struct {
 	Overwrite    *bool  `yaml:"overwrite,omitempty"`
 }
 
-// Group is one homogeneous set of VMs (e.g. "control-plane", "worker").
-// Settings is inlined so any default can be overridden directly on the group.
+// Host is one explicitly-specified VM (used when a group lists `hosts:`
+// instead of using count-based expansion).
+type Host struct {
+	Node     string `yaml:"node"`
+	VMID     int32  `yaml:"vmid"`
+	Hostname string `yaml:"hostname"`
+	IP       string `yaml:"ip"` // bare addr (uses group cidr/gateway) or full ipconfig0
+}
+
+// Group is one set of VMs (e.g. "control-plane", "worker"). It is either
+// count-based (count + vmid_start + node/nodes + spread + hostname) or
+// explicit (hosts: [...]). Settings is inlined so any default can be
+// overridden directly on the group.
 type Group struct {
 	Role      string   `yaml:"role"`
-	Count     int      `yaml:"count"`
+	Count     int      `yaml:"count,omitempty"`
 	Node      string   `yaml:"node,omitempty"`  // single target node
 	Nodes     []string `yaml:"nodes,omitempty"` // multi-node target set
 	Spread    string   `yaml:"spread,omitempty"`
-	VMIDStart int32    `yaml:"vmid_start"`
-	Hostname  string   `yaml:"hostname"`
+	VMIDStart int32    `yaml:"vmid_start,omitempty"`
+	Hostname  string   `yaml:"hostname,omitempty"`
+	Hosts     []Host   `yaml:"hosts,omitempty"`
 	Settings  `yaml:",inline"`
 }
 
@@ -98,6 +113,12 @@ func (d Settings) merge(o Settings) Settings {
 	if o.IP != "" {
 		r.IP = o.IP
 	}
+	if o.CIDR != "" {
+		r.CIDR = o.CIDR
+	}
+	if o.Gateway != "" {
+		r.Gateway = o.Gateway
+	}
 	if o.Nameserver != "" {
 		r.Nameserver = o.Nameserver
 	}
@@ -147,6 +168,30 @@ func assignNode(nodes []string, spread string, i, count int) string {
 	return nodes[i%len(nodes)] // round-robin default
 }
 
+// buildIPConfig turns a host `ip` value into a Proxmox ipconfig0 string.
+// A value containing '=' or ',' is treated as a full ipconfig0 and passed
+// through. A bare address gets cidr/gateway applied: "ip=<addr>/<cidr>,gw=<gw>".
+func buildIPConfig(ip, cidr, gateway string) (string, error) {
+	if ip == "" {
+		return "", fmt.Errorf("ip is required")
+	}
+	if strings.ContainsAny(ip, "=,") {
+		return ip, nil // full ipconfig0 passthrough
+	}
+	addr := ip
+	if !strings.Contains(addr, "/") {
+		if cidr == "" {
+			return "", fmt.Errorf("ip %q has no prefix and no `cidr` set (in defaults or group)", ip)
+		}
+		addr += "/" + strings.TrimPrefix(cidr, "/")
+	}
+	out := "ip=" + addr
+	if gateway != "" {
+		out += ",gw=" + gateway
+	}
+	return out, nil
+}
+
 // Resolve expands the spec into the concrete, ordered list of VMs to launch.
 // It validates required fields and that VM IDs do not collide across groups.
 func (s *Spec) Resolve() ([]PlannedVM, error) {
@@ -158,8 +203,58 @@ func (s *Spec) Resolve() ([]PlannedVM, error) {
 		if label == "" {
 			label = fmt.Sprintf("group[%d]", gi)
 		}
+		eff := s.Defaults.merge(g.Settings)
+		if eff.Template == "" {
+			return nil, fmt.Errorf("%s: template is required (set in defaults or on the group)", label)
+		}
+
+		// Explicit hosts mode.
+		if len(g.Hosts) > 0 {
+			if g.Count != 0 || g.Node != "" || len(g.Nodes) > 0 || g.VMIDStart != 0 || g.Hostname != "" || g.Spread != "" {
+				return nil, fmt.Errorf("%s: use either `hosts:` or count-based fields, not both", label)
+			}
+			for hi, h := range g.Hosts {
+				where := fmt.Sprintf("%s host[%d]", label, hi)
+				if h.Node == "" {
+					return nil, fmt.Errorf("%s: node is required", where)
+				}
+				if h.VMID <= 0 {
+					return nil, fmt.Errorf("%s: vmid must be > 0", where)
+				}
+				if h.Hostname == "" {
+					return nil, fmt.Errorf("%s: hostname is required", where)
+				}
+				ipc, err := buildIPConfig(h.IP, eff.CIDR, eff.Gateway)
+				if err != nil {
+					return nil, fmt.Errorf("%s (%s): %w", where, h.Hostname, err)
+				}
+				if prev, dup := seen[h.VMID]; dup {
+					return nil, fmt.Errorf("VM ID %d assigned to both %s and %s", h.VMID, prev, h.Hostname)
+				}
+				seen[h.VMID] = h.Hostname
+				plan = append(plan, PlannedVM{
+					Role:         label,
+					Node:         h.Node,
+					VMID:         h.VMID,
+					Name:         h.Hostname,
+					Hostname:     h.Hostname,
+					Template:     eff.Template,
+					Cores:        eff.Cores,
+					Memory:       eff.Memory,
+					IP:           ipc,
+					Nameserver:   eff.Nameserver,
+					SearchDomain: eff.SearchDomain,
+					Start:        deref(eff.Start),
+					StartAtBoot:  deref(eff.StartAtBoot),
+					Overwrite:    deref(eff.Overwrite),
+				})
+			}
+			continue
+		}
+
+		// Count-based mode.
 		if g.Count <= 0 {
-			return nil, fmt.Errorf("%s: count must be > 0", label)
+			return nil, fmt.Errorf("%s: count must be > 0 (or use `hosts:`)", label)
 		}
 		if g.VMIDStart <= 0 {
 			return nil, fmt.Errorf("%s: vmid_start must be set", label)
@@ -170,10 +265,6 @@ func (s *Spec) Resolve() ([]PlannedVM, error) {
 		if g.Spread != "" && g.Spread != SpreadRoundRobin && g.Spread != SpreadFill {
 			return nil, fmt.Errorf("%s: unknown spread %q (use %q or %q)", label, g.Spread, SpreadRoundRobin, SpreadFill)
 		}
-		eff := s.Defaults.merge(g.Settings)
-		if eff.Template == "" {
-			return nil, fmt.Errorf("%s: template is required (set in defaults or on the group)", label)
-		}
 		nodes, err := g.nodeList()
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", label, err)
@@ -182,7 +273,7 @@ func (s *Spec) Resolve() ([]PlannedVM, error) {
 		if ip == "" {
 			ip = "ip=dhcp"
 		}
-		for i := 0; i < g.Count; i++ {
+		for i := range g.Count {
 			vmid := g.VMIDStart + int32(i)
 			tag := fmt.Sprintf("%s#%d", label, i+1)
 			if prev, dup := seen[vmid]; dup {
