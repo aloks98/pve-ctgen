@@ -9,6 +9,7 @@ passwd:
     - name: core
       ssh_authorized_keys:
         - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFzsZwR43Gm8vUkx9s3aJl3mcmCJ8tl5x0S+GazG0iDV aloksahoo@mac
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbY4fAHtL2YnQji5aqrjpTCcmC9b0s0BtJebPjAEVIJ aloks98@fatman
 
 storage:
   files:
