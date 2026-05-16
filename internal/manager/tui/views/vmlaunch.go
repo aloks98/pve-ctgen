@@ -50,6 +50,7 @@ const (
 	fldVMID = iota
 	fldName
 	fldHostname
+	fldCount // number of VMs to launch (batch)
 	fldMemory
 	fldCores
 	fldIPType    // select: dhcp / static
@@ -59,8 +60,16 @@ const (
 	fldSearchDomain
 	fldStart
 	fldStartAtBoot
-	fldCount // sentinel
+	fldOverwrite
+	numFields // sentinel
 )
+
+// batchItem is one VM in a batch launch.
+type batchItem struct {
+	vmID     int32
+	name     string
+	hostname string
+}
 
 type vmField struct {
 	label   string
@@ -82,11 +91,26 @@ type VMLaunchModel struct {
 	selectedNode    *models.Node
 	selectedTmpl    *remoteTemplate
 
-	fields    [fldCount]vmField
+	fields    [numFields]vmField
 	cursor    int
 	statusMsg string
 	width     int
 	height    int
+
+	// batch launch state
+	batchQueue   []batchItem
+	batchIdx     int
+	batchResults []string
+
+	// shared params reused across a batch
+	bMemory       int32
+	bCores        int32
+	bIPConfig     string
+	bNameserver   string
+	bSearchDomain string
+	bStart        bool
+	bStartAtBoot  bool
+	bOverwrite    bool
 }
 
 // NewVMLaunchModel creates a new VMLaunchModel.
@@ -110,19 +134,21 @@ func (m *VMLaunchModel) initFields() {
 		ti.Width = 30
 		return vmField{label: label, input: ti}
 	}
-	m.fields = [fldCount]vmField{
-		fldVMID:       mk("VM ID", "e.g. 100", ""),
-		fldName:       mk("Name", "e.g. my-webserver", ""),
-		fldHostname:   mk("Hostname", "e.g. web-01 (optional)", ""),
-		fldMemory:     mk("Memory (MB)", "2048", "2048"),
-		fldCores:      mk("Cores", "2", "2"),
-		fldIPType:     {label: "IP Config", options: []string{"dhcp", "static"}, selIdx: 0},
+	m.fields = [numFields]vmField{
+		fldVMID:        mk("VM ID", "e.g. 100 (base ID for batch)", ""),
+		fldName:        mk("Name", "e.g. k8s-worker", ""),
+		fldHostname:    mk("Hostname", "e.g. k8s-worker (optional)", ""),
+		fldCount:       mk("Count", "1", "1"),
+		fldMemory:      mk("Memory (MB)", "2048", "2048"),
+		fldCores:       mk("Cores", "2", "2"),
+		fldIPType:      {label: "IP Config", options: []string{"dhcp", "static"}, selIdx: 0},
 		fldIPAddr:      mk("IP Address", "e.g. 192.168.1.50/24", ""),
 		fldGateway:     mk("Gateway", "e.g. 192.168.1.1", ""),
 		fldNameserver:  mk("Nameserver", "e.g. 8.8.8.8 (optional)", ""),
 		fldSearchDomain: mk("Search Domain", "e.g. e412.in (optional)", ""),
 		fldStart:       {label: "Start after create", options: []string{"yes", "no"}, selIdx: 0},
 		fldStartAtBoot: {label: "Start at boot", options: []string{"no", "yes"}, selIdx: 0},
+		fldOverwrite:   {label: "Overwrite if exists", options: []string{"no", "yes"}, selIdx: 0},
 	}
 }
 
@@ -155,12 +181,62 @@ func (m *VMLaunchModel) isStaticIP() bool {
 	return m.fields[fldIPType].options[m.fields[fldIPType].selIdx] == "static"
 }
 
+// persistKeys maps savable field IDs to stable keys for launch-defaults.yaml.
+// VM ID / Name / Hostname / Count are intentionally NOT persisted (unique per launch).
+var persistKeys = map[int]string{
+	fldMemory:       "memory",
+	fldCores:        "cores",
+	fldIPType:       "ip_type",
+	fldIPAddr:       "ip_addr",
+	fldGateway:      "gateway",
+	fldNameserver:   "nameserver",
+	fldSearchDomain: "search_domain",
+	fldStart:        "start",
+	fldStartAtBoot:  "start_at_boot",
+	fldOverwrite:    "overwrite",
+}
+
+// applyDefaults pre-fills savable fields from a stored defaults map.
+func (m *VMLaunchModel) applyDefaults(vals map[string]string) {
+	for fid, key := range persistKeys {
+		v, ok := vals[key]
+		if !ok || v == "" {
+			continue
+		}
+		f := &m.fields[fid]
+		if len(f.options) > 0 {
+			for i, opt := range f.options {
+				if opt == v {
+					f.selIdx = i
+					break
+				}
+			}
+		} else {
+			f.input.SetValue(v)
+		}
+	}
+}
+
+// collectDefaults gathers current savable field values for persistence.
+func (m *VMLaunchModel) collectDefaults() map[string]string {
+	vals := map[string]string{}
+	for fid, key := range persistKeys {
+		f := m.fields[fid]
+		if len(f.options) > 0 {
+			vals[key] = f.options[f.selIdx]
+		} else {
+			vals[key] = f.input.Value()
+		}
+	}
+	return vals
+}
+
 func (m *VMLaunchModel) visibleFields() []int {
-	ids := []int{fldVMID, fldName, fldHostname, fldMemory, fldCores, fldIPType}
+	ids := []int{fldVMID, fldName, fldHostname, fldCount, fldMemory, fldCores, fldIPType}
 	if m.isStaticIP() {
 		ids = append(ids, fldIPAddr, fldGateway, fldNameserver, fldSearchDomain)
 	}
-	ids = append(ids, fldStart, fldStartAtBoot)
+	ids = append(ids, fldStart, fldStartAtBoot, fldOverwrite)
 	return ids
 }
 
@@ -184,12 +260,23 @@ func (m VMLaunchModel) Update(msg tea.Msg) (VMLaunchModel, tea.Cmd) {
 		return m, nil
 
 	case vmLaunchResultMsg:
+		// Record this item's result
+		cur := m.batchQueue[m.batchIdx]
 		if msg.err != nil {
-			m.statusMsg = fmt.Sprintf("Launch failed: %v", msg.err)
+			m.batchResults = append(m.batchResults,
+				fmt.Sprintf("[!!] %s (VM %d): %v", cur.name, cur.vmID, msg.err))
 		} else if !msg.resp.Success {
-			m.statusMsg = fmt.Sprintf("Launch failed: %s", msg.resp.Message)
+			m.batchResults = append(m.batchResults,
+				fmt.Sprintf("[!!] %s (VM %d): %s", cur.name, cur.vmID, msg.resp.Message))
 		} else {
-			m.statusMsg = fmt.Sprintf("VM %d created: %s", msg.resp.VmId, msg.resp.Message)
+			m.batchResults = append(m.batchResults,
+				fmt.Sprintf("[OK] %s (VM %d) created", cur.name, cur.vmID))
+		}
+
+		// More to launch?
+		m.batchIdx++
+		if m.batchIdx < len(m.batchQueue) {
+			return m, tea.Batch(m.spinner.Tick, m.launchBatchItem(m.batchIdx))
 		}
 		m.phase = vmPhaseResult
 		return m, nil
@@ -266,6 +353,11 @@ func (m VMLaunchModel) updateTmplSelect(msg tea.Msg) (VMLaunchModel, tea.Cmd) {
 			m.cursor = 0
 			m.phase = vmPhaseConfig
 			m.statusMsg = ""
+			// Pre-fill from last-used values for this template
+			if vals, err := m.db.GetLaunchDefaults(tmpl.name); err == nil && len(vals) > 0 {
+				m.applyDefaults(vals)
+				m.statusMsg = "Pre-filled from last launch — adjust as needed"
+			}
 			// Focus first input
 			m.fields[fldVMID].input.Focus()
 			return m, m.fields[fldVMID].input.Focus()
@@ -376,19 +468,26 @@ func (m VMLaunchModel) submitConfig() (VMLaunchModel, tea.Cmd) {
 	vmIDStr := m.fields[fldVMID].input.Value()
 	name := m.fields[fldName].input.Value()
 	hostname := m.fields[fldHostname].input.Value()
+	countStr := m.fields[fldCount].input.Value()
 	memStr := m.fields[fldMemory].input.Value()
 	coresStr := m.fields[fldCores].input.Value()
-	start := m.fields[fldStart].options[m.fields[fldStart].selIdx] == "yes"
-	startAtBoot := m.fields[fldStartAtBoot].options[m.fields[fldStartAtBoot].selIdx] == "yes"
 
 	if vmIDStr == "" || name == "" {
 		m.statusMsg = "VM ID and Name are required"
 		return m, nil
 	}
-	newVMID, err := strconv.Atoi(vmIDStr)
+	baseVMID, err := strconv.Atoi(vmIDStr)
 	if err != nil {
 		m.statusMsg = "VM ID must be a number"
 		return m, nil
+	}
+	count := 1
+	if countStr != "" {
+		count, err = strconv.Atoi(countStr)
+		if err != nil || count < 1 {
+			m.statusMsg = "Count must be a positive number"
+			return m, nil
+		}
 	}
 	memory, _ := strconv.Atoi(memStr)
 	if memory == 0 {
@@ -402,6 +501,10 @@ func (m VMLaunchModel) submitConfig() (VMLaunchModel, tea.Cmd) {
 	// Build IP config string
 	ipConfig := "ip=dhcp"
 	if m.isStaticIP() {
+		if count > 1 {
+			m.statusMsg = "Batch (count > 1) requires DHCP — static IP can't auto-increment"
+			return m, nil
+		}
 		addr := m.fields[fldIPAddr].input.Value()
 		gw := m.fields[fldGateway].input.Value()
 		if addr == "" {
@@ -414,13 +517,49 @@ func (m VMLaunchModel) submitConfig() (VMLaunchModel, tea.Cmd) {
 		}
 	}
 
-	nameserver := m.fields[fldNameserver].input.Value()
-	searchDomain := m.fields[fldSearchDomain].input.Value()
+	// Build batch queue. For count == 1, keep names unchanged.
+	m.batchQueue = nil
+	for i := 0; i < count; i++ {
+		bi := batchItem{
+			vmID:     int32(baseVMID + i),
+			name:     name,
+			hostname: hostname,
+		}
+		if count > 1 {
+			bi.name = fmt.Sprintf("%s-%d", name, i+1)
+			if hostname != "" {
+				bi.hostname = fmt.Sprintf("%s-%d", hostname, i+1)
+			}
+		}
+		m.batchQueue = append(m.batchQueue, bi)
+	}
+	m.batchIdx = 0
+	m.batchResults = nil
+
+	// Persist these settings as defaults for this template
+	_ = m.db.SaveLaunchDefaults(m.selectedTmpl.name, m.collectDefaults())
+
+	// Store shared params for the batch
+	m.bMemory = int32(memory)
+	m.bCores = int32(cores)
+	m.bIPConfig = ipConfig
+	m.bNameserver = m.fields[fldNameserver].input.Value()
+	m.bSearchDomain = m.fields[fldSearchDomain].input.Value()
+	m.bStart = m.fields[fldStart].options[m.fields[fldStart].selIdx] == "yes"
+	m.bStartAtBoot = m.fields[fldStartAtBoot].options[m.fields[fldStartAtBoot].selIdx] == "yes"
+	m.bOverwrite = m.fields[fldOverwrite].options[m.fields[fldOverwrite].selIdx] == "yes"
 
 	m.phase = vmPhaseLaunching
 	m.statusMsg = ""
-	return m, tea.Batch(m.spinner.Tick, m.launchVMCmd(m.selectedTmpl.vmID, int32(newVMID), name,
-		hostname, int32(memory), int32(cores), ipConfig, nameserver, searchDomain, start, startAtBoot))
+	return m, tea.Batch(m.spinner.Tick, m.launchBatchItem(0))
+}
+
+// launchBatchItem returns a command that launches the i-th VM in the batch.
+func (m VMLaunchModel) launchBatchItem(i int) tea.Cmd {
+	bi := m.batchQueue[i]
+	return m.launchVMCmd(m.selectedTmpl.vmID, bi.vmID, bi.name, bi.hostname,
+		m.bMemory, m.bCores, m.bIPConfig, m.bNameserver, m.bSearchDomain,
+		m.bStart, m.bStartAtBoot, m.bOverwrite)
 }
 
 func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
@@ -444,7 +583,7 @@ func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
 	}
 }
 
-func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname string, memory, cores int32, ipConfig, nameserver, searchDomain string, start, startAtBoot bool) tea.Cmd {
+func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname string, memory, cores int32, ipConfig, nameserver, searchDomain string, start, startAtBoot, overwrite bool) tea.Cmd {
 	node := m.selectedNode
 
 	// Detect init type by looking up the template in the local store by VM ID.
@@ -479,6 +618,7 @@ func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname str
 			Nameserver:   nameserver,
 			SearchDomain: searchDomain,
 			InitType:     initType,
+			Overwrite:    overwrite,
 		})
 		return vmLaunchResultMsg{resp: resp, err: err}
 	}
@@ -580,15 +720,43 @@ func (m VMLaunchModel) View() string {
 		}
 
 	case vmPhaseLaunching:
-		fmt.Fprintf(&b, "  %s Launching VM...", m.spinner.View())
+		total := len(m.batchQueue)
+		cur := m.batchQueue[m.batchIdx]
+		fmt.Fprintf(&b, "  %s Launching %d/%d: %s (VM %d)...\n",
+			m.spinner.View(), m.batchIdx+1, total, cur.name, cur.vmID)
+		// Show already-completed items
+		for _, r := range m.batchResults {
+			style := styles.SuccessStyle
+			if strings.HasPrefix(r, "[!!]") {
+				style = styles.ErrorStyle
+			}
+			b.WriteString("  " + style.Render(r) + "\n")
+		}
 
 	case vmPhaseResult:
-		if strings.Contains(m.statusMsg, "created") {
-			b.WriteString(styles.SuccessStyle.Render("  " + m.statusMsg))
+		ok, failed := 0, 0
+		for _, r := range m.batchResults {
+			if strings.HasPrefix(r, "[OK]") {
+				ok++
+			} else {
+				failed++
+			}
+		}
+		summary := fmt.Sprintf("  %d succeeded, %d failed", ok, failed)
+		if failed == 0 {
+			b.WriteString(styles.SuccessStyle.Render(summary))
 		} else {
-			b.WriteString(styles.ErrorStyle.Render("  " + m.statusMsg))
+			b.WriteString(styles.ErrorStyle.Render(summary))
 		}
 		b.WriteString("\n\n")
+		for _, r := range m.batchResults {
+			style := styles.SuccessStyle
+			if strings.HasPrefix(r, "[!!]") {
+				style = styles.ErrorStyle
+			}
+			b.WriteString("  " + style.Render(r) + "\n")
+		}
+		b.WriteString("\n")
 		b.WriteString(styles.MutedStyle.Render("  enter/esc: back"))
 	}
 

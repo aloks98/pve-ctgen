@@ -82,6 +82,8 @@ message LaunchVMRequest {
   string search_domain = 11;
   // init_type: "cloudinit" (default) or "ignition". Affects how hostname/network is applied.
   string init_type = 12;
+  // overwrite: if true and new_vm_id already exists, destroy it first.
+  bool overwrite = 13;
 }
 
 message LaunchVMResponse {

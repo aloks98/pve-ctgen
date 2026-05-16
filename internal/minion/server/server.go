@@ -16,6 +16,7 @@ import (
 
 	"github.com/aloks98/pve-ctgen/internal/minion/builder"
 	minionconfig "github.com/aloks98/pve-ctgen/internal/minion/config"
+	"github.com/aloks98/pve-ctgen/internal/shared/ignition"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 )
 
@@ -83,12 +84,41 @@ func (s *Server) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthRespo
 	return resp, nil
 }
 
+// vmExists reports whether a VM/template with the given ID exists on this node.
+func vmExists(vmID int32) bool {
+	// `qm status <id>` exits non-zero if the VM doesn't exist.
+	return exec.Command("qm", "status", fmt.Sprintf("%d", vmID)).Run() == nil
+}
+
 // LaunchVM clones a template and optionally starts the VM.
 func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.LaunchVMResponse, error) {
+	vmIDStr := fmt.Sprintf("%d", req.NewVmId)
+
+	// If the target VM ID already exists, either destroy it (overwrite) or fail.
+	if vmExists(req.NewVmId) {
+		if !req.Overwrite {
+			return &pb.LaunchVMResponse{
+				VmId:    req.NewVmId,
+				Success: false,
+				Message: fmt.Sprintf("VM %d already exists (enable Overwrite to replace it)", req.NewVmId),
+			}, nil
+		}
+		// Stop (ignore errors — may already be stopped) then purge-destroy.
+		_ = exec.Command("qm", "stop", vmIDStr).Run()
+		if out, err := exec.Command("qm", "destroy", vmIDStr, "--purge", "--destroy-unreferenced-disks", "1").CombinedOutput(); err != nil {
+			return &pb.LaunchVMResponse{
+				VmId:    req.NewVmId,
+				Success: false,
+				Message: fmt.Sprintf("overwrite: destroy VM %d failed: %v\n%s", req.NewVmId, err, out),
+			}, nil
+		}
+		log.Printf("VM %d destroyed for overwrite", req.NewVmId)
+	}
+
 	// Clone the template
 	args := []string{
 		"clone", fmt.Sprintf("%d", req.TemplateId),
-		fmt.Sprintf("%d", req.NewVmId),
+		vmIDStr,
 		"--name", req.Name,
 		"--full",
 	}
@@ -108,8 +138,19 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 	// Apply config overrides
 	setArgs := []string{"set", fmt.Sprintf("%d", req.NewVmId)}
 
+	// For Ignition (Flatcar): clone inherits cicustom user=...ign. Inject a
+	// per-VM /etc/hostname into a copy of that Ignition and repoint cicustom.
+	if isIgnition {
+		hostname := req.Hostname
+		if hostname == "" {
+			hostname = req.Name
+		}
+		if err := s.applyIgnitionHostname(req.NewVmId, hostname, &setArgs); err != nil {
+			log.Printf("ignition hostname injection failed: %v", err)
+		}
+	}
+
 	// For cloud-init VMs, write a per-VM meta-data snippet with hostname.
-	// For Ignition (Flatcar), hostname is set inside the Butane config.
 	if !isIgnition {
 		vmHostname := req.Name
 		if req.Hostname != "" {
@@ -198,6 +239,62 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 		Success: true,
 		Message: fmt.Sprintf("VM %d created from template %d", req.NewVmId, req.TemplateId),
 	}, nil
+}
+
+// applyIgnitionHostname reads the cloned VM's inherited Ignition snippet,
+// injects /etc/hostname, writes a per-VM snippet, and appends the new
+// cicustom user= override to setArgs.
+func (s *Server) applyIgnitionHostname(vmID int32, hostname string, setArgs *[]string) error {
+	// Find the base Ignition snippet the clone inherited.
+	out, err := exec.Command("bash", "-c",
+		fmt.Sprintf("qm config %d | grep cicustom | cut -d' ' -f2-", vmID)).Output()
+	if err != nil {
+		return fmt.Errorf("read cicustom: %w", err)
+	}
+	cicustom := strings.TrimSpace(string(out))
+	if cicustom == "" {
+		return fmt.Errorf("no cicustom on VM %d", vmID)
+	}
+
+	// Extract the user= snippet filename
+	var baseFile string
+	for _, part := range strings.Split(cicustom, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "user=") {
+			// user=local:snippets/foo.ign  ->  foo.ign
+			val := strings.TrimPrefix(part, "user=")
+			if idx := strings.LastIndex(val, "/"); idx >= 0 {
+				baseFile = val[idx+1:]
+			} else {
+				baseFile = val
+			}
+		}
+	}
+	if baseFile == "" {
+		return fmt.Errorf("no user= snippet in cicustom %q", cicustom)
+	}
+
+	basePath := fmt.Sprintf("%s/%s", s.cfg.SnippetsPath, baseFile)
+	baseJSON, err := os.ReadFile(basePath)
+	if err != nil {
+		return fmt.Errorf("read base ignition %s: %w", basePath, err)
+	}
+
+	modified, err := ignition.InjectHostname(baseJSON, hostname)
+	if err != nil {
+		return fmt.Errorf("inject hostname: %w", err)
+	}
+
+	perVMFile := fmt.Sprintf("vm-%d.ign", vmID)
+	perVMPath := fmt.Sprintf("%s/%s", s.cfg.SnippetsPath, perVMFile)
+	if err := os.WriteFile(perVMPath, modified, 0644); err != nil {
+		return fmt.Errorf("write per-vm ignition: %w", err)
+	}
+
+	*setArgs = append(*setArgs, "--cicustom",
+		fmt.Sprintf("user=local:snippets/%s", perVMFile))
+	log.Printf("VM %d: ignition hostname %q -> %s", vmID, hostname, perVMFile)
+	return nil
 }
 
 // ListTemplates returns all templates on the node using the Proxmox API via pvesh.

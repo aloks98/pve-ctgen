@@ -4,6 +4,7 @@ package ignition
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	butane "github.com/coreos/butane/config"
@@ -47,4 +48,55 @@ func Validate(butaneYAML []byte) error {
 func IsButane(filename string) bool {
 	lower := strings.ToLower(filename)
 	return strings.HasSuffix(lower, ".bu") || strings.HasSuffix(lower, ".butane")
+}
+
+// InjectHostname adds (or replaces) an /etc/hostname file in an Ignition JSON
+// config so the booted Flatcar VM gets the given hostname. Returns the
+// modified Ignition JSON.
+func InjectHostname(ignJSON []byte, hostname string) ([]byte, error) {
+	if hostname == "" {
+		return ignJSON, nil
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(ignJSON, &cfg); err != nil {
+		return nil, fmt.Errorf("parse ignition json: %w", err)
+	}
+
+	storage, _ := cfg["storage"].(map[string]any)
+	if storage == nil {
+		storage = map[string]any{}
+		cfg["storage"] = storage
+	}
+
+	var files []any
+	if existing, ok := storage["files"].([]any); ok {
+		for _, f := range existing {
+			if fm, ok := f.(map[string]any); ok {
+				if p, _ := fm["path"].(string); p == "/etc/hostname" {
+					continue // drop existing, we replace it
+				}
+			}
+			files = append(files, f)
+		}
+	}
+
+	// Ignition data URL: percent-encode the content. Valid hostnames only
+	// contain [A-Za-z0-9.-] so PathEscape is a safe no-op for them.
+	source := "data:," + url.PathEscape(hostname) + "%0A"
+	files = append(files, map[string]any{
+		"path":      "/etc/hostname",
+		"mode":      420, // 0644
+		"overwrite": true,
+		"contents": map[string]any{
+			"source": source,
+		},
+	})
+	storage["files"] = files
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal ignition json: %w", err)
+	}
+	return out, nil
 }

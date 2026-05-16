@@ -526,7 +526,9 @@ type LaunchVMRequest struct {
 	Nameserver   string                 `protobuf:"bytes,10,opt,name=nameserver,proto3" json:"nameserver,omitempty"`
 	SearchDomain string                 `protobuf:"bytes,11,opt,name=search_domain,json=searchDomain,proto3" json:"search_domain,omitempty"`
 	// init_type: "cloudinit" (default) or "ignition". Affects how hostname/network is applied.
-	InitType      string `protobuf:"bytes,12,opt,name=init_type,json=initType,proto3" json:"init_type,omitempty"`
+	InitType string `protobuf:"bytes,12,opt,name=init_type,json=initType,proto3" json:"init_type,omitempty"`
+	// overwrite: if true and new_vm_id already exists, destroy it first.
+	Overwrite     bool `protobuf:"varint,13,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -643,6 +645,13 @@ func (x *LaunchVMRequest) GetInitType() string {
 		return x.InitType
 	}
 	return ""
+}
+
+func (x *LaunchVMRequest) GetOverwrite() bool {
+	if x != nil {
+		return x.Overwrite
+	}
+	return false
 }
 
 type LaunchVMResponse struct {
@@ -886,7 +895,7 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x18\n" +
 	"\ahealthy\x18\x03 \x01(\bR\ahealthy\x12'\n" +
 	"\x0fproxmox_version\x18\x04 \x01(\tR\x0eproxmoxVersion\x12+\n" +
-	"\x11available_storage\x18\x05 \x03(\tR\x10availableStorage\"\xe5\x02\n" +
+	"\x11available_storage\x18\x05 \x03(\tR\x10availableStorage\"\x83\x03\n" +
 	"\x0fLaunchVMRequest\x12\x1f\n" +
 	"\vtemplate_id\x18\x01 \x01(\x05R\n" +
 	"templateId\x12\x1a\n" +
@@ -903,7 +912,8 @@ const file_proto_pvectgen_v1_service_proto_rawDesc = "" +
 	" \x01(\tR\n" +
 	"nameserver\x12#\n" +
 	"\rsearch_domain\x18\v \x01(\tR\fsearchDomain\x12\x1b\n" +
-	"\tinit_type\x18\f \x01(\tR\binitType\"[\n" +
+	"\tinit_type\x18\f \x01(\tR\binitType\x12\x1c\n" +
+	"\toverwrite\x18\r \x01(\bR\toverwrite\"[\n" +
 	"\x10LaunchVMResponse\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\x05R\x04vmId\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x18\n" +

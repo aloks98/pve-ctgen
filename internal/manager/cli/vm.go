@@ -44,6 +44,7 @@ func newVMLaunchCmd() *cobra.Command {
 			ipConfig, _ := cmd.Flags().GetString("ip")
 			memory, _ := cmd.Flags().GetInt("memory")
 			cores, _ := cmd.Flags().GetInt("cores")
+			overwrite, _ := cmd.Flags().GetBool("overwrite")
 
 			node, err := db.GetNode(nodeName)
 			if err != nil {
@@ -80,6 +81,7 @@ func newVMLaunchCmd() *cobra.Command {
 				Memory:      int32(memory),
 				Cores:       int32(cores),
 				InitType:    initType,
+				Overwrite:   overwrite,
 			})
 			if err != nil {
 				return fmt.Errorf("launch VM: %w", err)
@@ -102,6 +104,7 @@ func newVMLaunchCmd() *cobra.Command {
 	cmd.Flags().String("ip", "dhcp", "IP configuration")
 	cmd.Flags().Int("memory", 2048, "Memory in MB")
 	cmd.Flags().Int("cores", 2, "CPU cores")
+	cmd.Flags().Bool("overwrite", false, "Destroy and replace if the VM ID already exists")
 	_ = cmd.MarkFlagRequired("template-id")
 	_ = cmd.MarkFlagRequired("vm-id")
 	_ = cmd.MarkFlagRequired("name")
