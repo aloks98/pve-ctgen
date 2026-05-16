@@ -126,6 +126,51 @@ func newFleetApplyCmd() *cobra.Command {
 	return cmd
 }
 
+type nodeTemplate struct {
+	name string
+	id   int32
+	tags string
+}
+
+// resolveTemplate maps a manifest template name (the os_list name, e.g.
+// "flatcar-k8s") to the actual template on the node. The build names
+// templates "<name>-<vmid>-<suffix>" (see config/steps.json), so an exact
+// match is preferred but a single "<want>-…" convention match is accepted.
+func resolveTemplate(tmpls []nodeTemplate, want string) (nodeTemplate, error) {
+	var exact, prefix []nodeTemplate
+	for _, t := range tmpls {
+		switch {
+		case t.name == want:
+			exact = append(exact, t)
+		case strings.HasPrefix(t.name, want+"-"):
+			prefix = append(prefix, t)
+		}
+	}
+	if len(exact) == 1 {
+		return exact[0], nil
+	}
+	if len(exact) == 0 && len(prefix) == 1 {
+		return prefix[0], nil
+	}
+	if cands := append(exact, prefix...); len(cands) > 1 {
+		names := make([]string, len(cands))
+		for i, c := range cands {
+			names[i] = c.name
+		}
+		return nodeTemplate{}, fmt.Errorf("template %q is ambiguous on node: %s (rename templates or reference one exactly)",
+			want, strings.Join(names, ", "))
+	}
+	avail := "none"
+	if len(tmpls) > 0 {
+		names := make([]string, len(tmpls))
+		for i, t := range tmpls {
+			names[i] = t.name
+		}
+		avail = strings.Join(names, ", ")
+	}
+	return nodeTemplate{}, fmt.Errorf("template %q not found on node (available: %s)", want, avail)
+}
+
 // launchNodeItems sequentially launches all planned VMs targeted at one node.
 func launchNodeItems(node *models.Node, items []fleet.PlannedVM) []fleetResult {
 	out := make([]fleetResult, 0, len(items))
@@ -139,18 +184,16 @@ func launchNodeItems(node *models.Node, items []fleet.PlannedVM) []fleetResult {
 	}
 	defer client.Close()
 
-	// Resolve template name -> (vm id, tags) once per node.
+	// List templates once per node, then resolve each manifest template name
+	// (which is the os_list name) to the actual node template, whose name
+	// follows the build convention "<name>-<vmid>-<suffix>".
 	tmplCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	tmplResp, terr := client.ListTemplates(tmplCtx)
 	cancel()
-	type tinfo struct {
-		id   int32
-		tags string
-	}
-	tmap := map[string]tinfo{}
+	var tmpls []nodeTemplate
 	if terr == nil {
 		for _, t := range tmplResp.Templates {
-			tmap[t.Name] = tinfo{id: t.VmId, tags: t.Tags}
+			tmpls = append(tmpls, nodeTemplate{name: t.Name, id: t.VmId, tags: t.Tags})
 		}
 	}
 
@@ -159,9 +202,9 @@ func launchNodeItems(node *models.Node, items []fleet.PlannedVM) []fleetResult {
 			out = append(out, fleetResult{vm: p, status: "failed", msg: fmt.Sprintf("list templates: %v", terr)})
 			continue
 		}
-		ti, ok := tmap[p.Template]
-		if !ok {
-			out = append(out, fleetResult{vm: p, status: "failed", msg: fmt.Sprintf("template %q not found on node", p.Template)})
+		ti, rerr := resolveTemplate(tmpls, p.Template)
+		if rerr != nil {
+			out = append(out, fleetResult{vm: p, status: "failed", msg: rerr.Error()})
 			continue
 		}
 		initType := models.InitTypeCloudInit
