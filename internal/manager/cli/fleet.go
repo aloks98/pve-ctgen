@@ -213,7 +213,8 @@ func printPlan(name string, order []string, byNode map[string][]fleet.PlannedVM)
 			if p.Overwrite {
 				ow = "  overwrite"
 			}
-			fmt.Printf("  VM %-5d %-22s %-36s %-14s [%s]%s\n", p.VMID, p.Name, p.IP, p.Template, p.Role, ow)
+			size := fmt.Sprintf("%dc/%dM", p.Cores, p.Memory)
+			fmt.Printf("  VM %-5d %-22s %-36s %-10s %-14s [%s]%s\n", p.VMID, p.Name, p.IP, size, p.Template, p.Role, ow)
 		}
 	}
 }
