@@ -36,6 +36,7 @@ func NewManagerCmd() *cobra.Command {
 		newBuildCmd(),
 		newBuildsCmd(),
 		newVMCmd(),
+		newFleetCmd(),
 		newImportCmd(),
 	)
 

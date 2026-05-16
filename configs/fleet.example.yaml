@@ -1,0 +1,32 @@
+# Declarative fleet manifest — `pvectgen manager fleet apply fleet.yaml`
+#
+# Re-running converges: existing VM IDs are skipped (idempotent) unless the
+# manifest sets `overwrite: true`, which destroys + recreates them.
+# Use `--dry-run` to preview the resolved plan without creating anything.
+
+name: k8s-prod
+
+# Fleet-wide defaults; any field can be overridden per group.
+defaults:
+  template: flatcar-k8s     # template NAME (resolved to the node's VM ID)
+  cores: 4
+  memory: 4096
+  ip: ip=dhcp               # ipconfig0 string; or "ip=10.0.0.10/24,gw=10.0.0.1"
+  start: true
+  start_at_boot: true
+  overwrite: false          # false = skip if VM ID exists; true = destroy+recreate
+
+groups:
+  - role: control-plane
+    count: 3
+    node: rack-1            # single node: all 3 here
+    vmid_start: 100         # -> 100,101,102
+    hostname: k8s-cp        # -> k8s-cp-1, k8s-cp-2, k8s-cp-3
+
+  - role: worker
+    count: 6
+    nodes: [rack-1, rack-2, rack-3]
+    spread: round-robin     # round-robin (default) | fill
+    vmid_start: 110         # -> 110..115, spread 2 per node
+    hostname: k8s-worker
+    memory: 8192            # override the default for workers
