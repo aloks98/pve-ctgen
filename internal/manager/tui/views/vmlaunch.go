@@ -583,12 +583,30 @@ func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
 	}
 }
 
+// hasTag reports whether the comma/semicolon/space-separated Proxmox tag
+// string contains want (case-insensitive).
+func hasTag(tags, want string) bool {
+	for _, t := range strings.FieldsFunc(tags, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' '
+	}) {
+		if strings.EqualFold(strings.TrimSpace(t), want) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname string, memory, cores int32, ipConfig, nameserver, searchDomain string, start, startAtBoot, overwrite bool) tea.Cmd {
 	node := m.selectedNode
 
-	// Detect init type by looking up the template in the local store by VM ID.
-	initType := "cloudinit"
-	if templates, err := m.db.ListTemplates(); err == nil {
+	// Detect init type. Prefer the template's tags as reported by the node
+	// (authoritative — template VM IDs on the node rarely match os_list seed
+	// IDs, so a local-store lookup by VM ID is unreliable). Fall back to the
+	// local store for older templates that predate the `ignition` tag.
+	initType := models.InitTypeCloudInit
+	if m.selectedTmpl != nil && hasTag(m.selectedTmpl.tags, models.InitTypeIgnition) {
+		initType = models.InitTypeIgnition
+	} else if templates, err := m.db.ListTemplates(); err == nil {
 		for _, t := range templates {
 			if t.VMID == int(templateID) {
 				initType = t.EffectiveInitType()
