@@ -12,7 +12,7 @@ build:
 	rm -rf $(BUILD_DIR)
 	mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/pvectgen
-	cp -r cloudinit $(BUILD_DIR)/
+	cp -r cloudinit ignition $(BUILD_DIR)/
 	cp -r config $(BUILD_DIR)/
 
 # Build for current platform

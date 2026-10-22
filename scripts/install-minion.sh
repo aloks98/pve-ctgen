@@ -3,10 +3,10 @@
 # pvectgen minion installer
 #
 # One-line install:
-#   curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash
+#   curl --connect-timeout 15 --max-time 600 -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash
 #
 # Or with a specific version:
-#   curl -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash -s -- v1.0.0
+#   curl --connect-timeout 15 --max-time 600 -fsSL https://raw.githubusercontent.com/aloks98/pve-ctgen/main/scripts/install-minion.sh | bash -s -- v1.0.0
 #
 set -euo pipefail
 
@@ -27,6 +27,35 @@ info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
+
+# Stage on the destination filesystem, then rename over the executable.
+atomic_install() {
+  local source_file="$1" staged_file
+  if [[ -w "$INSTALL_DIR" ]]; then
+    staged_file="$(mktemp "${INSTALL_DIR}/.pvectgen.XXXXXX")"
+    if ! install -m 0755 "$source_file" "$staged_file" || ! mv -f "$staged_file" "${INSTALL_DIR}/${BINARY_NAME}"; then
+      rm -f "$staged_file"; return 1
+    fi
+  else
+    staged_file="$(sudo mktemp "${INSTALL_DIR}/.pvectgen.XXXXXX")"
+    if ! sudo install -m 0755 "$source_file" "$staged_file" || ! sudo mv -f "$staged_file" "${INSTALL_DIR}/${BINARY_NAME}"; then
+      sudo rm -f "$staged_file"; return 1
+    fi
+  fi
+}
+
+verify_archive() {
+  local expected actual
+  curl --connect-timeout 15 --max-time 120 -fsSL -o "${TMP_DIR}/checksums.txt" "https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+  expected="$(awk -v name="$TARBALL" '$2 == name {print $1}' "${TMP_DIR}/checksums.txt")"
+  [[ "$expected" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Missing or ambiguous SHA-256 checksum for $TARBALL"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "${TMP_DIR}/${TARBALL}" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "${TMP_DIR}/${TARBALL}" | awk '{print $1}')"
+  fi
+  [[ "$actual" == "$expected" ]] || fail "Archive checksum mismatch"
+}
 
 # --- Pre-flight checks ---
 
@@ -55,7 +84,7 @@ info "Architecture: ${ARCH} (${GOARCH})"
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
   info "Fetching latest release..."
-  VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
+  VERSION="$(curl --connect-timeout 15 --max-time 600 -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
   [[ -n "$VERSION" ]] || fail "Could not determine latest version. Pass a version: bash install-minion.sh v1.0.0"
 fi
 
@@ -63,24 +92,29 @@ info "Version: ${VERSION}"
 
 # --- Download ---
 
+[[ "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Invalid release version"
+VERSION="v${VERSION#v}"
 TARBALL="${BINARY_NAME}_${VERSION#v}_linux_${GOARCH}.tar.gz"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${TARBALL}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 info "Downloading ${DOWNLOAD_URL}..."
-curl -fsSL -o "${TMP_DIR}/${TARBALL}" "$DOWNLOAD_URL" || fail "Download failed. Check the version and URL."
+curl --connect-timeout 15 --max-time 600 -fsSL -o "${TMP_DIR}/${TARBALL}" "$DOWNLOAD_URL" || fail "Download failed. Check the version and URL."
 ok "Downloaded."
 
 # --- Install binary ---
 
 info "Extracting..."
-tar -xzf "${TMP_DIR}/${TARBALL}" -C "$TMP_DIR"
+verify_archive
+# Extract only the binary to stdout; archive paths are never created.
+tar -xOzf "${TMP_DIR}/${TARBALL}" pvectgen > "${TMP_DIR}/${BINARY_NAME}"
+[[ -s "${TMP_DIR}/${BINARY_NAME}" ]] || fail "Empty release binary"
 
 # Stop service if running (ignore errors for fresh installs)
 systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 
-install -m 0755 "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+atomic_install "${TMP_DIR}/${BINARY_NAME}"
 ok "Installed ${INSTALL_DIR}/${BINARY_NAME}"
 
 # --- Config ---
@@ -118,6 +152,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 User=root
+UMask=0077
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
@@ -125,6 +161,8 @@ EOF
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
+chmod 0600 "${CONFIG_DIR}/minion.yaml"
+"${INSTALL_DIR}/${BINARY_NAME}" minion connect --config "${CONFIG_DIR}/minion.yaml"
 systemctl start "$SERVICE_NAME"
 ok "Service ${SERVICE_NAME} enabled and started."
 

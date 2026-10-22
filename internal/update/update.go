@@ -1,172 +1,169 @@
 package update
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/aloks98/pve-ctgen/internal/shared/download"
+	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const repo = "aloks98/pve-ctgen"
 
-// Release represents a GitHub release.
 type Release struct {
 	TagName string  `json:"tag_name"`
 	Assets  []Asset `json:"assets"`
 }
-
-// Asset represents a release asset.
 type Asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-// CheckLatest returns the latest release tag from GitHub.
-func CheckLatest() (string, error) {
-	resp, err := http.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo))
+var versionRE = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
+func release(ctx context.Context, version string) (*Release, error) {
+	endpoint := "latest"
+	if version != "" {
+		if !versionRE.MatchString(version) {
+			return nil, fmt.Errorf("version must be vMAJOR.MINOR.PATCH")
+		}
+		endpoint = "tags/v" + strings.TrimPrefix(version, "v")
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/"+repo+"/releases/"+endpoint, nil)
 	if err != nil {
-		return "", fmt.Errorf("check latest: %w", err)
+		return nil, err
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("github API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API: HTTP %d", resp.StatusCode)
 	}
-
 	var rel Release
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
+	err = json.NewDecoder(io.LimitReader(resp.Body, 4*1024*1024)).Decode(&rel)
+	if err != nil {
+		return nil, err
 	}
-	return rel.TagName, nil
+	if !versionRE.MatchString(rel.TagName) {
+		return nil, fmt.Errorf("invalid release version %q", rel.TagName)
+	}
+	return &rel, nil
 }
-
-// NeedsUpdate compares current version with latest.
+func CheckLatest() (string, error) {
+	r, e := release(context.Background(), "")
+	if e != nil {
+		return "", e
+	}
+	return r.TagName, nil
+}
 func NeedsUpdate(current, latest string) bool {
-	current = strings.TrimPrefix(current, "v")
-	latest = strings.TrimPrefix(latest, "v")
-	return current != latest && current != "dev"
+	a, b := versionRE.FindStringSubmatch(current), versionRE.FindStringSubmatch(latest)
+	if a == nil || b == nil {
+		return false
+	}
+	for i := 1; i <= 3; i++ {
+		x, _ := strconv.ParseUint(a[i], 10, 64)
+		y, _ := strconv.ParseUint(b[i], 10, 64)
+		if x != y {
+			return y > x
+		}
+	}
+	return false
 }
-
-// SelfUpdate downloads the latest release and replaces the current binary.
-func SelfUpdate(currentVersion string) error {
-	latest, err := CheckLatest()
+func SelfUpdate(current string, versions ...string) error {
+	target := ""
+	if len(versions) > 0 {
+		target = versions[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	rel, err := release(ctx, target)
 	if err != nil {
 		return err
 	}
-
-	if !NeedsUpdate(currentVersion, latest) {
-		fmt.Printf("Already up to date (%s)\n", currentVersion)
+	if target == "" && !NeedsUpdate(current, rel.TagName) {
+		fmt.Printf("No newer stable release for %s\n", current)
 		return nil
 	}
-
-	fmt.Printf("Updating %s -> %s\n", currentVersion, latest)
-
-	// Find the right asset
-	assetName := fmt.Sprintf("pvectgen_%s_%s_%s.tar.gz",
-		strings.TrimPrefix(latest, "v"),
-		runtime.GOOS,
-		runtime.GOARCH,
-	)
-
-	resp, err := http.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	var rel Release
-	json.NewDecoder(resp.Body).Decode(&rel)
-
-	var downloadURL string
+	name := fmt.Sprintf("pvectgen_%s_%s_%s.tar.gz", strings.TrimPrefix(rel.TagName, "v"), runtime.GOOS, runtime.GOARCH)
+	var archiveURL, checksumURL string
 	for _, a := range rel.Assets {
-		if a.Name == assetName {
-			downloadURL = a.BrowserDownloadURL
-			break
+		if a.Name == name {
+			archiveURL = a.BrowserDownloadURL
+		}
+		if a.Name == "checksums.txt" {
+			checksumURL = a.BrowserDownloadURL
 		}
 	}
-	if downloadURL == "" {
-		return fmt.Errorf("no release asset found for %s/%s (%s)", runtime.GOOS, runtime.GOARCH, assetName)
+	if archiveURL == "" || checksumURL == "" {
+		return fmt.Errorf("release missing %s or checksums.txt", name)
 	}
-
-	// Download to temp dir
-	tmpDir, err := os.MkdirTemp("", "pvectgen-update-*")
+	dir, err := os.MkdirTemp("", "pvectgen-update-")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
-
-	tarPath := filepath.Join(tmpDir, assetName)
-	fmt.Printf("Downloading %s...\n", assetName)
-
-	dlResp, err := http.Get(downloadURL)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
+	defer os.RemoveAll(dir)
+	archive := filepath.Join(dir, name)
+	if err = download.Verified(ctx, archiveURL, checksumURL, archive, nil); err != nil {
+		return err
 	}
-	defer dlResp.Body.Close()
-
-	f, err := os.Create(tarPath)
+	binary, err := extractBinary(archive)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, dlResp.Body); err != nil {
-		f.Close()
+	dst, err := os.Executable()
+	if err != nil {
 		return err
 	}
-	f.Close()
-
-	// Extract
-	cmd := exec.Command("tar", "-xzf", tarPath, "-C", tmpDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("extract: %w\n%s", err, out)
-	}
-
-	newBinary := filepath.Join(tmpDir, "pvectgen")
-	if _, err := os.Stat(newBinary); err != nil {
-		return fmt.Errorf("binary not found in archive")
-	}
-
-	// Replace current binary
-	currentBinary, err := os.Executable()
+	dst, err = filepath.EvalSymlinks(dst)
 	if err != nil {
-		return fmt.Errorf("find current binary: %w", err)
+		return err
 	}
-	currentBinary, _ = filepath.EvalSymlinks(currentBinary)
-
-	// Try direct replace, fall back to sudo
-	if err := replaceBinary(newBinary, currentBinary); err != nil {
-		fmt.Println("Direct replace failed, trying with sudo...")
-		cmd := exec.Command("sudo", "cp", newBinary, currentBinary)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("sudo replace: %w", err)
-		}
+	if err = fileutil.AtomicWrite(dst, binary, 0755); err != nil {
+		return fmt.Errorf("replace executable atomically (run update with write access to %s): %w", filepath.Dir(dst), err)
 	}
-
-	fmt.Printf("Updated to %s\n", latest)
+	fmt.Printf("Updated to %s; restart any running minion service to use it\n", rel.TagName)
 	return nil
 }
-
-func replaceBinary(src, dst string) error {
-	in, err := os.Open(src)
+func extractBinary(path string) ([]byte, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, 0755)
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil, fmt.Errorf("binary not found in archive")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Name != "pvectgen" && h.Name != "./pvectgen" {
+			continue
+		}
+		if h.Typeflag != tar.TypeReg || h.Size <= 0 || h.Size > 256*1024*1024 {
+			return nil, fmt.Errorf("invalid binary archive entry")
+		}
+		return io.ReadAll(io.LimitReader(tr, 256*1024*1024+1))
+	}
 }
-

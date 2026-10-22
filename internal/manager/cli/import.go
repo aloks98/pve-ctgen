@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	assets "github.com/aloks98/pve-ctgen"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -22,6 +25,20 @@ func newImportCmd() *cobra.Command {
 			cloudinitDir, _ := cmd.Flags().GetString("cloudinit-dir")
 			force, _ := cmd.Flags().GetBool("force")
 
+			dir, err := assets.Extract()
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(dir)
+			if images == "" {
+				images = filepath.Join(dir, "config/os_list.json")
+			}
+			if steps == "" {
+				steps = filepath.Join(dir, "config/steps.json")
+			}
+			if cloudinitDir == "" {
+				cloudinitDir = filepath.Join(dir, "cloudinit")
+			}
 			if err := db.Seed(images, steps, cloudinitDir, force); err != nil {
 				return fmt.Errorf("import failed: %w", err)
 			}
@@ -34,9 +51,9 @@ func newImportCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().String("images", "config/os_list.json", "Path to os_list.json")
-	cmd.Flags().String("steps", "config/steps.json", "Path to steps.json")
-	cmd.Flags().String("cloudinit-dir", "cloudinit", "Path to cloud-init directory")
+	cmd.Flags().String("images", "", "Path to os_list.json")
+	cmd.Flags().String("steps", "", "Path to steps.json")
+	cmd.Flags().String("cloudinit-dir", "", "Path to cloud-init directory")
 	cmd.Flags().Bool("force", false, "Overwrite existing entries")
 	return cmd
 }

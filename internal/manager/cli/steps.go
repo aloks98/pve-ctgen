@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	assets "github.com/aloks98/pve-ctgen"
+	"github.com/aloks98/pve-ctgen/internal/shared/models"
 
-	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
 	"github.com/spf13/cobra"
 )
 
@@ -159,7 +161,11 @@ func newStepsResetCmd() *cobra.Command {
 			}
 			defer db.Close()
 
-			defaults, err := fileutil.LoadSteps("config/steps.json")
+			data, err := assets.Files.ReadFile("config/steps.json")
+			var defaults []models.Step
+			if err == nil {
+				err = json.Unmarshal(data, &defaults)
+			}
 			if err != nil {
 				return fmt.Errorf("load default steps: %w", err)
 			}

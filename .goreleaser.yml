@@ -29,6 +29,7 @@ archives:
     files:
       - configs/*
       - cloudinit/*
+      - ignition/*
       - config/*
       - scripts/install-minion.sh
       - LICENSE*

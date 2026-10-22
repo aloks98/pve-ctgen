@@ -31,19 +31,15 @@ func main() {
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("pvectgen %s\n", version)
-			latest, err := update.CheckLatest()
-			if err == nil && update.NeedsUpdate(version, latest) {
-				fmt.Printf("Update available: %s -> %s\n", version, latest)
-				fmt.Println("Run 'pvectgen update' to update.")
-			}
 		},
 	})
 
 	rootCmd.AddCommand(&cobra.Command{
-		Use:   "update",
+		Use:   "update [version]",
+		Args:  cobra.MaximumNArgs(1),
 		Short: "Update pvectgen to the latest version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return update.SelfUpdate(version)
+			return update.SelfUpdate(version, args...)
 		},
 	})
 
