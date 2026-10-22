@@ -3,10 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/buildrun"
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
@@ -41,6 +39,8 @@ type NavigateMsg struct {
 // AppModel is the root BubbleTea model.
 type AppModel struct {
 	currentView   View
+	navFocused    bool
+	navCursor     int
 	homeModel     views.HomeModel
 	cloudinitView views.CloudInitModel
 	templatesView views.TemplatesModel
@@ -60,8 +60,8 @@ type AppModel struct {
 func NewApp(db *store.DB, version string) AppModel {
 	home := views.NewHomeModel(db, version)
 	home.Refresh()
-	return AppModel{
-		currentView:   ViewHome,
+	m := AppModel{
+		currentView:   ViewTemplates,
 		homeModel:     home,
 		cloudinitView: views.NewCloudInitModel(db),
 		templatesView: views.NewTemplatesModel(db),
@@ -73,6 +73,9 @@ func NewApp(db *store.DB, version string) AppModel {
 		nodesView:     views.NewNodesModel(db),
 		store:         db,
 	}
+	m.templatesView.Refresh()
+	m.nodesView.Refresh()
+	return m
 }
 
 // Init implements tea.Model.
@@ -111,21 +114,45 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.statusBar.Width = msg.Width
-		contentHeight := msg.Height - 4 // title + statusbar
-		m.cloudinitView.SetSize(msg.Width, contentHeight)
-		m.templatesView.SetSize(msg.Width, contentHeight)
-		m.stepsView.SetSize(msg.Width, contentHeight)
-		m.buildsView.SetSize(msg.Width, contentHeight)
-		m.buildSelect.SetSize(msg.Width, contentHeight)
-		m.buildProgress.SetSize(msg.Width, contentHeight)
-		m.vmLaunch.SetSize(msg.Width, contentHeight)
-		m.nodesView.SetSize(msg.Width, contentHeight)
+		m.resizeViews()
 		return m, nil
 
 	case tea.KeyMsg:
 		// ctrl+c always quits
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+
+		if m.width < 40 || m.height < 12 {
+			return m, nil
+		}
+		if !m.inSubView() && msg.String() == "f2" {
+			m.navFocused = !m.navFocused
+			for i, d := range destinations {
+				if d.view == m.currentView {
+					m.navCursor = i
+				}
+			}
+			return m, nil
+		}
+		if m.navFocused {
+			switch msg.String() {
+			case "up", "k":
+				m.navCursor = max(0, m.navCursor-1)
+			case "down", "j":
+				m.navCursor = min(len(destinations)-1, m.navCursor+1)
+			case "esc":
+				m.navFocused = false
+			case "enter":
+				m.navFocused = false
+				return m.Update(NavigateMsg{View: destinations[m.navCursor].view})
+			default:
+				if key := msg.String(); len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+					m.navFocused = false
+					return m.Update(NavigateMsg{View: destinations[int(key[0]-'1')].view})
+				}
+			}
+			return m, nil
 		}
 
 		// If a sub-view has a form/modal open, delegate everything to it
@@ -135,25 +162,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "q":
-			if m.currentView == ViewHome {
+			if m.currentView == ViewTemplates {
 				return m, tea.Quit
 			}
 			if m.currentView == ViewBuildProgress && m.buildProgress.Running() {
 				m.buildProgress.Backgrounded = true
 			}
-			m.currentView = ViewHome
-			m.homeModel.Refresh()
+			m.currentView = ViewTemplates
+			m.templatesView.Refresh()
 			return m, nil
 		case "esc":
 			if m.currentView == ViewBuildProgress && m.buildProgress.Running() {
 				m.buildProgress.Backgrounded = true
 			}
-			if m.currentView != ViewHome {
-				m.currentView = ViewHome
-				m.homeModel.Refresh()
+			if m.currentView != ViewTemplates {
+				m.currentView = ViewTemplates
+				m.templatesView.Refresh()
 				return m, nil
 			}
-			return m, tea.Quit
+			return m, nil
 		}
 
 	// Build events are always handled, even when backgrounded on another view
@@ -176,6 +203,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.buildProgress.Init()
 
 	case NavigateMsg:
+		if msg.View == ViewBuildSelect && m.buildProgress.Running() {
+			msg.View = ViewBuildProgress
+		}
 		m.currentView = msg.View
 		switch msg.View {
 		case ViewCloudInit:
@@ -235,8 +265,6 @@ func (m AppModel) View() string {
 		return "Loading..."
 	}
 
-	title := styles.TitleStyle.Width(m.width).Render(" pvectgen")
-
 	var content string
 	switch m.currentView {
 	case ViewHome:
@@ -259,20 +287,7 @@ func (m AppModel) View() string {
 		content = m.nodesView.View()
 	}
 
-	// Pad content to fill available height
-	contentHeight := m.height - 3 // title(1) + statusbar(1) + padding
-	contentLines := strings.Count(content, "\n")
-	if contentLines < contentHeight {
-		content += strings.Repeat("\n", contentHeight-contentLines)
-	}
-
-	m.statusBar.Width = m.width
-	m.statusBar.Breadcrumb = m.breadcrumb()
-	m.statusBar.HelpKeys = m.helpKeys()
-	m.statusBar.RightText = m.rightStatus()
-	statusBar := m.statusBar.View()
-
-	return lipgloss.JoinVertical(lipgloss.Left, title, content, statusBar)
+	return m.workspace(content)
 }
 
 func (m AppModel) breadcrumb() string {
@@ -316,7 +331,7 @@ func (m AppModel) helpKeys() string {
 		return styles.HelpBar(
 			styles.HelpEntry("j/k", "move"),
 			styles.HelpEntry("esc", "back"),
-			styles.HelpEntry("q", "home"),
+			styles.HelpEntry("q", "templates"),
 		)
 	}
 }
