@@ -10,9 +10,9 @@ ssh_genkeytypes:
   - ecdsa
   - ed25519
 
-# Create/reuse the primary group explicitly (Ubuntu images may already have it).
-groups:
-  - admin
+# Runs before user creation; --force also handles images with an admin group.
+bootcmd:
+  - [groupadd, --force, admin]
 
 # Users
 users:
@@ -158,7 +158,7 @@ runcmd:
   - /usr/local/sbin/pvectgen-setup-el
   - chsh -s /usr/bin/fish root
   - localectl set-locale LANG=en_US.UTF-8
-  - systemctl enable --now qemu-guest-agent || true
+  - systemctl start qemu-guest-agent
   - chown -R admin:admin /home/admin
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
   - sed -i 's/^session.*pam_motd.so.*$/#&/' /etc/pam.d/sshd

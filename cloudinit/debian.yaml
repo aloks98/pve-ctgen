@@ -10,9 +10,9 @@ ssh_genkeytypes:
   - ecdsa
   - ed25519
 
-# Create/reuse the primary group explicitly (Ubuntu images may already have it).
-groups:
-  - admin
+# Runs before user creation; --force also handles images with an admin group.
+bootcmd:
+  - [groupadd, --force, admin]
 
 # Users
 users:
@@ -167,7 +167,7 @@ runcmd:
   - sed -i 's/^# *en_IN.UTF-8 UTF-8/en_IN.UTF-8 UTF-8/' /etc/locale.gen
   - locale-gen
   - update-locale LANG=en_US.UTF-8
-  - systemctl enable --now qemu-guest-agent || true
+  - systemctl start qemu-guest-agent
   - chown -R admin:admin /home/admin
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
   - sed -i 's/^session.*pam_motd.so.*$/#&/' /etc/pam.d/sshd
@@ -175,6 +175,6 @@ runcmd:
   - rm -f /etc/motd
   - touch /etc/motd
   - chmod 644 /etc/motd
-  - systemctl restart sshd
+  - systemctl restart ssh
 
 final_message: Cloud-init completed in $UPTIME seconds
