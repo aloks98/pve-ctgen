@@ -3,17 +3,21 @@ package styles
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Colors — muted palette, btop-inspired
-	Primary    = lipgloss.AdaptiveColor{Light: "#2855b8", Dark: "#90AEFF"} // soft blue
-	Accent     = lipgloss.AdaptiveColor{Light: "#286447", Dark: "#8DD7B0"} // teal-green
-	Highlight  = lipgloss.AdaptiveColor{Light: "#815900", Dark: "#F0CB82"} // warm yellow
-	Success    = lipgloss.AdaptiveColor{Light: "#286447", Dark: "#8DD7B0"} // green
-	Error      = lipgloss.AdaptiveColor{Light: "#A22D3D", Dark: "#F59AAB"} // red
-	Warning    = lipgloss.AdaptiveColor{Light: "#815900", Dark: "#F0CB82"} // yellow
-	Muted      = lipgloss.AdaptiveColor{Light: "#697586", Dark: "#8695A8"} // dark gray
-	Dim        = lipgloss.AdaptiveColor{Light: "#536276", Dark: "#96A4B6"} // medium gray
-	White      = lipgloss.AdaptiveColor{Light: "#263345", Dark: "#D9E2EE"} // off-white
-	BgSelected = lipgloss.AdaptiveColor{Light: "#DFE8FF", Dark: "#25354F"} // subtle bg highlight
+	// Workspace artboard palette, with a corresponding light theme.
+	Canvas      = lipgloss.AdaptiveColor{Light: "#F6F7F9", Dark: "#11151C"}
+	Border      = lipgloss.AdaptiveColor{Light: "#BAC5D1", Dark: "#3B485B"}
+	CanvasStyle = lipgloss.NewStyle().Foreground(White).Background(Canvas)
+	RuleStyle   = lipgloss.NewStyle().Foreground(Border)
+	Primary     = lipgloss.AdaptiveColor{Light: "#2855b8", Dark: "#90AEFF"} // soft blue
+	Accent      = lipgloss.AdaptiveColor{Light: "#286447", Dark: "#8DD7B0"} // teal-green
+	Highlight   = lipgloss.AdaptiveColor{Light: "#815900", Dark: "#F0CB82"} // warm yellow
+	Success     = lipgloss.AdaptiveColor{Light: "#286447", Dark: "#8DD7B0"} // green
+	Error       = lipgloss.AdaptiveColor{Light: "#A22D3D", Dark: "#F59AAB"} // red
+	Warning     = lipgloss.AdaptiveColor{Light: "#815900", Dark: "#F0CB82"} // yellow
+	Muted       = lipgloss.AdaptiveColor{Light: "#697586", Dark: "#8695A8"} // dark gray
+	Dim         = lipgloss.AdaptiveColor{Light: "#536276", Dark: "#96A4B6"} // medium gray
+	White       = lipgloss.AdaptiveColor{Light: "#263345", Dark: "#D9E2EE"} // off-white
+	BgSelected  = lipgloss.AdaptiveColor{Light: "#DFE8FF", Dark: "#25354F"} // subtle bg highlight
 
 	// Title bar — full width, inverted
 	TitleStyle = lipgloss.NewStyle().
@@ -66,9 +70,7 @@ var (
 				Foreground(Dim)
 
 	// Table header
-	TableHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(Accent)
+	TableHeaderStyle = lipgloss.NewStyle().Foreground(Dim)
 
 	// Table row
 	TableRowStyle = lipgloss.NewStyle().
@@ -112,9 +114,9 @@ func Key(k string) string {
 	return StatusBarKeyStyle.Render(k)
 }
 
-// HelpEntry renders a "key:description" pair for the help bar.
+// HelpEntry renders a key and description pair for the help bar.
 func HelpEntry(key, desc string) string {
-	return Key(key) + StatusBarDescStyle.Render(":"+desc)
+	return Key(key) + StatusBarDescStyle.Render(" "+desc)
 }
 
 // HelpBar renders a full help bar from key-description pairs.

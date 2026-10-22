@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
@@ -23,12 +22,19 @@ var destinations = []struct {
 	{"Overview", ViewHome},
 }
 
+// Keep large terminals readable without stretching short IDs across the screen.
+func (m AppModel) shellWidth() int { return min(156, max(1, m.width-4)) }
+
 func (m AppModel) contentSize() (int, int) {
-	w := m.width - 2
+	w := m.shellWidth()
 	if m.width >= 100 {
-		w -= 22
+		w -= 24
 	}
-	return max(1, w), max(1, m.height-4)
+	h := m.height - 4
+	if m.height >= 24 {
+		h -= 3
+	}
+	return max(1, w), max(1, h)
 }
 
 func (m *AppModel) resizeViews() {
@@ -37,38 +43,47 @@ func (m *AppModel) resizeViews() {
 	m.templatesView.SetSize(w, h)
 	m.stepsView.SetSize(w, h)
 	m.buildsView.SetSize(w, h)
-	m.buildSelect.SetSize(w, h)
+	m.buildSelect.SetSize(min(w, 88), h)
 	m.buildProgress.SetSize(w, h)
 	m.vmLaunch.SetSize(w, h)
 	m.nodesView.SetSize(w, h)
 }
 
 func (m AppModel) navigation(height int) string {
-	lines := []string{styles.DimStyle.Render("WORKSPACE"), ""}
-	start := 0
-	if m.navFocused {
-		start = max(0, m.navCursor-max(1, height-4)+1)
-	}
-	for i, d := range destinations {
-		if i < start || i >= start+max(1, height-4) {
-			continue
+	lines := []string{styles.DimStyle.Render(" WORKSPACE"), ""}
+	visible := max(1, height-4)
+	cursor := m.navCursor
+	if !m.navFocused {
+		for i, d := range destinations {
+			if d.view == m.currentView {
+				cursor = i
+			}
 		}
-		label := fmt.Sprintf(" %d %s", i+1, d.label)
+	}
+	start := max(0, cursor-visible+1)
+	for i := start; i < min(len(destinations), start+visible); i++ {
+		d := destinations[i]
+		label := "  " + d.label
 		style := styles.MenuItemStyle
 		if m.currentView == d.view {
-			label = ">" + label[1:]
-			style = styles.SelectedStyle
-		}
-		if m.navFocused && m.navCursor == i {
+			label = "› " + d.label
 			style = styles.TableSelectedRowStyle
 		}
-		lines = append(lines, style.Render(label))
+		if m.navFocused && m.navCursor == i {
+			label = "› " + d.label
+			style = styles.TableSelectedRowStyle.Underline(true)
+		}
+		lines = append(lines, style.Render(styles.Fit(label, 20, 1)))
 	}
-	if m.buildProgress.Running() {
-		lines = append(lines, "", styles.WarningStyle.Render("[..] Build active"))
-	}
-	if m.navFocused {
-		lines = append(lines, "", styles.DimStyle.Render("j/k move  enter open"))
+	if height >= len(lines)+2 {
+		for len(lines) < height-2 {
+			lines = append(lines, "")
+		}
+		if m.buildProgress.Running() {
+			lines = append(lines, styles.WarningStyle.Render(" [..] Build active"))
+		} else {
+			lines = append(lines, styles.DimStyle.Render(" No active build"))
+		}
 	}
 	return styles.Fit(strings.Join(lines, "\n"), 20, height)
 }
@@ -85,7 +100,8 @@ func (m AppModel) workspace(content string) string {
 		return styles.Fit("pve-ctgen\nResize terminal to at least 40 x 12.\nctrl+c quit", m.width, m.height)
 	}
 	w, h := m.contentSize()
-	title := styles.BoldStyle.Render("pve-ctgen") + "  /  " + styles.AccentStyle.Render(strings.TrimPrefix(m.breadcrumb(), "pvectgen > "))
+	shell := m.shellWidth()
+	title := styles.BoldStyle.Render("pve-ctgen") + "   " + styles.DimStyle.Render("workspace / ") + styles.AccentStyle.Render(strings.TrimPrefix(m.breadcrumb(), "pvectgen > "))
 	if m.buildProgress.Running() {
 		title += "  " + styles.WarningStyle.Render("[..] build active")
 	}
@@ -93,13 +109,32 @@ func (m AppModel) workspace(content string) string {
 		content = m.navigation(h)
 	}
 	body := styles.Fit(content, w, h)
+	if m.currentView == ViewBuildSelect && !(m.navFocused && m.width < 100) && w > 88 {
+		body = lipgloss.JoinHorizontal(lipgloss.Top, strings.Repeat(" ", (w-88)/2), styles.Fit(content, 88, h))
+	}
 	if m.width >= 100 {
-		divider := styles.MutedStyle.Render(strings.TrimSuffix(strings.Repeat("|\n", h), "\n"))
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.navigation(h), divider, " ", body)
+		divider := styles.RuleStyle.Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, m.navigation(h), " ", divider, "  ", body)
 	}
-	footer := m.navigationKey() + " workspace  " + m.helpKeys()
+	footer := styles.HelpEntry(m.navigationKey(), "workspace") + "  " + m.helpKeys()
 	if m.navFocused {
-		footer = m.navigationKey() + " close  j/k move  enter open"
+		footer = styles.HelpBar(styles.HelpEntry(m.navigationKey(), "close"), styles.HelpEntry("j/k", "move"), styles.HelpEntry("enter", "open"), styles.HelpEntry("1–9", "jump"))
 	}
-	return styles.Fit(title, m.width, 1) + "\n" + styles.Fit(styles.MutedStyle.Render(strings.Repeat("-", m.width)), m.width, 1) + "\n" + styles.Fit(body, m.width, h) + "\n" + styles.Fit("", m.width, 1) + "\n" + styles.Fit(footer, m.width, 1)
+	lines := []string{styles.Fit(title, shell, 1), styles.Rule(shell)}
+	if m.height >= 24 {
+		lines = append([]string{""}, lines...)
+		lines = append(lines, "")
+	}
+	lines = append(lines, body, styles.Rule(shell), styles.Fit(footer, shell, 1))
+	if m.height >= 24 {
+		lines = append(lines, "")
+	}
+	// Center the bounded workspace on very wide terminals; retain a two-cell
+	// margin at ordinary widths. Paint all blank cells, not just text fragments.
+	margin := strings.Repeat(" ", max(0, (m.width-shell)/2))
+	output := strings.Split(strings.Join(lines, "\n"), "\n")
+	for i := range output {
+		output[i] = margin + output[i]
+	}
+	return styles.CanvasStyle.Render(styles.Fit(strings.Join(output, "\n"), m.width, m.height))
 }

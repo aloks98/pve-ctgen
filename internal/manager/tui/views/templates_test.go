@@ -1,12 +1,35 @@
 package views
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
 	"github.com/aloks98/pve-ctgen/internal/shared/models"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+func TestTemplateDetailsAndActionsFitWithLongList(t *testing.T) {
+	db := testDB(t)
+	for i := 0; i < 30; i++ {
+		_, err := db.CreateTemplate(&models.Template{Name: fmt.Sprintf("template-%02d", i), VMID: 9400 + i, URL: "https://example.invalid/disk.img", ChecksumURL: "https://example.invalid/SHA256SUMS"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewTemplatesModel(db)
+	m.Refresh()
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	for _, size := range [][2]int{{132, 51}, {92, 29}, {76, 17}} {
+		m.SetSize(size[0], size[1])
+		view := m.View()
+		if lipgloss.Height(view) > size[1] || !strings.Contains(view, "template-29") || !strings.Contains(view, "enter details") {
+			t.Fatalf("selected row or actions overflow at %v: height %d", size, lipgloss.Height(view))
+		}
+	}
+}
 
 func testDB(t *testing.T) *store.DB {
 	t.Helper()

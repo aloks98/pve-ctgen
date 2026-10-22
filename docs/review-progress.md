@@ -28,6 +28,8 @@ Implementation steps, committed separately:
 | 16 | Filterable template browser, selected details, profile editing, delete confirmation, adaptive tables/forms | Unicode/paging, filtered actions and focused-field visibility tests |
 | 17 | Guided build review with validated snapshots and live preflight gate | Failed/stale checks, invalid IDs, immutable requests and duplicate-submit tests |
 | 18 | Persistent progress logs, paused follow, explicit reconnect and remote cancellation | Race tests for replay and queue cancellation; live terminal checks |
+| 19 | Alacritty Command+G mapping instructions and explicit Mac shortcut hints | Navigation toggle, form focus, removed F2 alias and CLI tests |
+| 20 | Artboard palette, padded shell, filled selections, balanced columns, consistent headings and template detail grid | Actual render inspection, long-list/wide-terminal regressions, TUI/CLI race tests and remote PTY smoke test |
 
 The implementation uses the existing CLI build coordinator and minion jobs. See
 [TUI controls and limitations](tui.md). Artboard sources remain uncommitted in the

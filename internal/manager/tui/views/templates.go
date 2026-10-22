@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
@@ -66,7 +67,9 @@ func (m *TemplatesModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 	m.search.Width = max(10, w-8)
-	m.table.Height = max(4, h-12)
+	if h >= 20 {
+		m.table.Height = max(4, h-15)
+	}
 	m.detailView.Width = max(1, w)
 	m.detailView.Height = max(1, h-5)
 	m.detailView.SetContent(ansi.Hardwrap(m.detail, max(1, w), true))
@@ -356,27 +359,48 @@ func (m TemplatesModel) View() string {
 	}
 
 	// List mode
-	b.WriteString(styles.BoldStyle.Render(fmt.Sprintf("Templates  %d definitions", len(m.names))))
-	b.WriteString("\n")
-	if m.searching {
-		b.WriteString("/ " + m.search.View())
-	} else if m.search.Value() != "" {
-		b.WriteString(styles.DimStyle.Render("Filter: " + m.search.Value()))
-	} else {
-		b.WriteString(styles.DimStyle.Render("Select a definition to inspect or build."))
+	subtitle := fmt.Sprintf("%d definitions", len(m.names))
+	if m.search.Value() != "" {
+		subtitle += " · filter: " + m.search.Value()
 	}
-	b.WriteString("\n\n")
+	b.WriteString(styles.PageHeader("Templates", subtitle, "b  Build…", m.width))
+	if m.searching {
+		// Replace the subtitle in place so filtering does not change the layout.
+		b.Reset()
+		b.WriteString(styles.PageHeader("Templates", "/ "+m.search.View(), "b  Build…", m.width))
+	}
 	b.WriteString(m.table.View())
 	b.WriteString("\n\n")
 	if idx := m.table.SelectedRow(); idx >= 0 && idx < len(m.names) && m.height >= 20 {
 		for _, t := range m.templates {
-			if t.Name == m.names[idx] {
-				fmt.Fprintf(&b, "%s\nInit config  %s\nImage        %s\n\n", styles.AccentStyle.Render(t.Name), t.CloudInit, t.URL)
-				break
+			if t.Name != m.names[idx] {
+				continue
 			}
+			profile := t.Profile
+			if profile == "" {
+				profile = "Node default"
+			}
+			init := t.CloudInit
+			if init == "" {
+				init = "None"
+			}
+			tags := t.Tags
+			if tags == "" {
+				tags = "None"
+			}
+			field := func(label, value string, width int) string {
+				return styles.Fit(styles.DimStyle.Render(label), width, 1) + "\n" + styles.Fit(value, width, 1)
+			}
+			col := max(1, (m.width-3)/2)
+			left := field("Template", fmt.Sprintf("%s · VMID %d", t.Name, t.VMID), col) + "\n\n" + field("Profile", profile, col)
+			right := field("Initialization", init+" · "+t.EffectiveInitType(), m.width-col-3) + "\n\n" + field("Tags", tags, m.width-col-3)
+			b.WriteString(styles.Rule(m.width) + "\n\n")
+			b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right))
+			b.WriteString("\n\n")
+			break
 		}
 	}
-	b.WriteString(styles.DimStyle.Render("b build  / filter  a add  e edit  d delete  enter details"))
+	b.WriteString(styles.DimStyle.Render("/ filter  a add  e edit  d delete  enter details"))
 	if m.statusMsg != "" {
 		b.WriteString("  " + styles.SuccessStyle.Render(m.statusMsg))
 	}

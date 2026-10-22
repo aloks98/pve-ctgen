@@ -347,9 +347,7 @@ func (m CloudInitModel) View() string {
 	}
 
 	// List mode
-	b.WriteString("\n")
-	b.WriteString(styles.SectionStyle.Render(" Cloud-Init Configs "))
-	b.WriteString("\n\n")
+	b.WriteString(styles.PageHeader("Init configs", "Reusable initialization definitions", "a  Add", m.width))
 	b.WriteString(m.table.View())
 	b.WriteString("\n\n")
 	b.WriteString(styles.HelpBar(

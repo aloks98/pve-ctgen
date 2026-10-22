@@ -51,7 +51,7 @@ func TestMacNavigationUsesTerminalControlByte(t *testing.T) {
 
 func TestWorkspaceFitsAndNavigation(t *testing.T) {
 	m := testApp(t)
-	for _, size := range [][2]int{{140, 42}, {100, 30}, {80, 24}, {40, 12}, {20, 5}, {1, 1}} {
+	for _, size := range [][2]int{{200, 58}, {140, 42}, {100, 30}, {80, 24}, {40, 12}, {20, 5}, {1, 1}} {
 		next, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		m = next.(AppModel)
 		for _, d := range destinations {

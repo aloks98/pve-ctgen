@@ -11,12 +11,13 @@ import (
 
 // Table is a navigable table with header separator.
 type Table struct {
-	Headers   []string
-	Rows      [][]string
-	Cursor    int
-	Width     int
-	Height    int
-	ColWidths []int
+	Headers      []string
+	Rows         [][]string
+	Cursor       int
+	Width        int
+	Height       int
+	ColWidths    []int
+	EmptyMessage string
 }
 
 // NewTable creates a new Table.
@@ -103,7 +104,19 @@ func (t *Table) View() string {
 		}
 		widths[largest]--
 	}
-	widths[0] += max(0, budget-sum())
+	// Distribute spare space proportionally instead of assigning it all to
+	// the first column (which may be a short ID).
+	total := sum()
+	spare := max(0, budget-total)
+	used := 0
+	for i := range widths {
+		extra := spare * widths[i] / total
+		widths[i] += extra
+		used += extra
+	}
+	for i := 0; i < spare-used; i++ {
+		widths[i%columns]++
+	}
 	renderRow := func(row []string, selected, header bool) string {
 		cells := make([]string, columns)
 		for i := range cells {
@@ -111,26 +124,31 @@ func (t *Table) View() string {
 			if i < len(row) {
 				value = row[i]
 			}
-			if i == 0 && !header {
+			if i == 0 {
 				if selected {
-					value = "> " + value
+					value = "› " + value
 				} else {
 					value = "  " + value
 				}
 			}
-			style := styles.TableRowStyle
-			if header {
-				style = styles.TableHeaderStyle
-			} else if selected {
-				style = styles.TableSelectedRowStyle
-			}
-			cells[i] = style.Render(styles.Fit(value, widths[i], 1))
+			cells[i] = styles.Fit(value, widths[i], 1)
 		}
-		return strings.Join(cells, " ")
+		style := styles.TableRowStyle
+		if header {
+			style = styles.TableHeaderStyle
+		} else if selected {
+			style = styles.TableSelectedRowStyle
+		}
+		// Apply the selection to the whole row, including column gutters.
+		return style.Render(strings.Join(cells, " "))
 	}
-	lines := []string{renderRow(t.Headers, false, true), styles.MutedStyle.Render(strings.Repeat("-", width))}
+	lines := []string{renderRow(t.Headers, false, true), styles.Rule(width)}
 	if len(t.Rows) == 0 {
-		return strings.Join(append(lines, styles.DimStyle.Render("No items found.")), "\n")
+		message := t.EmptyMessage
+		if message == "" {
+			message = "No items found."
+		}
+		return strings.Join(append(lines, styles.DimStyle.Render(styles.Fit(message, width, 1))), "\n")
 	}
 	visible := max(1, t.Height-3)
 	start := max(0, t.Cursor-visible+1)

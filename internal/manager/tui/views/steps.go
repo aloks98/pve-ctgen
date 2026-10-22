@@ -235,9 +235,7 @@ func (m StepsModel) View() string {
 	}
 
 	// List mode
-	b.WriteString("\n")
-	b.WriteString(styles.TitleStyle.Render(" Build Steps "))
-	b.WriteString("\n\n")
+	b.WriteString(styles.PageHeader("Build steps", "Ordered commands applied during a build", "a  Add", m.width))
 	b.WriteString(m.table.View())
 	b.WriteString("\n\n")
 	b.WriteString(styles.MutedStyle.Render("  enter: detail • a: add • e: edit • d: delete • J/K: reorder"))

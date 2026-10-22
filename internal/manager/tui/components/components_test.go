@@ -8,7 +8,27 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
+
+func TestWideTableKeepsColumnsTogether(t *testing.T) {
+	table := NewTable([]string{"BUILD", "TEMPLATE", "NODE", "STATUS", "STARTED", "DURATION"}, []int{10, 14, 14, 11, 20, 12})
+	table.Width, table.Height = 200, 12
+	table.SetRows([][]string{{"12345678", "debian-12", "tokyo", "completed", "10-23 12:00:00", "2m"}})
+	lines := strings.Split(ansi.Strip(table.View()), "\n")
+	if pos := strings.Index(lines[0], "TEMPLATE"); pos < 0 || pos > 35 {
+		t.Fatalf("short build ID consumed the wide table: %q", lines[0])
+	}
+	prefix := strings.Split(lines[2], "12345678")[0]
+	if lipgloss.Width(prefix) != strings.Index(lines[0], "BUILD") {
+		t.Fatal("first column header and value are misaligned")
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) != 200 {
+			t.Fatalf("table row does not fill its width: %d", lipgloss.Width(line))
+		}
+	}
+}
 
 func TestTableUnicodeAndPaging(t *testing.T) {
 	table := NewTable([]string{"NAME", "ID", "PROFILE"}, []int{28, 8, 20})

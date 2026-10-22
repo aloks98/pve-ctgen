@@ -316,9 +316,7 @@ func (m NodesModel) View() string {
 	}
 
 	// List mode
-	b.WriteString("\n")
-	b.WriteString(styles.TitleStyle.Render(" Nodes "))
-	b.WriteString("\n\n")
+	b.WriteString(styles.PageHeader("Nodes", "Enrolled nodes · check health before building", "h  Health", m.width))
 	b.WriteString(m.table.View())
 	b.WriteString("\n\n")
 	b.WriteString(styles.MutedStyle.Render("  a: add • e: edit name • d: delete • h: health check"))

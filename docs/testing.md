@@ -75,3 +75,12 @@ were changed. Reconnect and cancellation in this UI phase were tested through
 the session coordinator with controlled streams; actual minion cancellation and
 replay were covered by the earlier live tests above. A full guest build/launch was
 not repeated for the UI overhaul.
+
+The visual fidelity pass was also tested on 2026-10-23. TUI/CLI race tests and
+vet passed, including regressions for 200-column table spacing, aligned headers,
+and keeping selected template details/actions visible with a long list. Actual
+Go-rendered screens were inspected at 120 × 36 and 200 × 58, plus compact sizes.
+The isolated remote PTY smoke test above was repeated with `--mac-keys`, the
+Ctrl+G byte sent by the Alacritty Command+G mapping, and 200 × 58 resizing.
+All checks passed. The physical Mac keyboard/Alacritty configuration could not be
+exercised from the VM; that binding must be added on the Mac.

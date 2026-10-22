@@ -359,10 +359,10 @@ func (m BuildSelectModel) View() string {
 	stages := []string{"Select", "Node", "VM IDs", "Review"}
 	for i := range stages {
 		if i == m.phase {
-			stages[i] = styles.SelectedStyle.Render("[" + stages[i] + "]")
+			stages[i] = styles.SelectedStyle.Render(stages[i])
 		}
 	}
-	heading := styles.BoldStyle.Render("Build a template") + "\n" + strings.Join(stages, " > ") + "\n\n"
+	heading := styles.PageHeader("Build a template", strings.Join(stages, " → "), "", m.width)
 	if m.phase == phaseReview {
 		hint := "Checking... | esc back"
 		if !m.checking {
@@ -398,7 +398,7 @@ func (m BuildSelectModel) View() string {
 	for i := start; i < min(len(rows), start+visible); i++ {
 		line := "  " + rows[i]
 		if i == m.cursor {
-			line = styles.SelectedStyle.Render("> " + rows[i])
+			line = styles.TableSelectedRowStyle.Render(styles.Fit("› "+rows[i], m.width, 1))
 		}
 		heading += line + "\n"
 	}

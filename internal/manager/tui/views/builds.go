@@ -28,9 +28,10 @@ type BuildsModel struct {
 // NewBuildsModel creates a new BuildsModel.
 func NewBuildsModel(db *store.DB) BuildsModel {
 	t := components.NewTable(
-		[]string{"BUILD_ID", "TEMPLATE", "NODE", "STATUS", "STARTED", "DURATION"},
+		[]string{"BUILD", "TEMPLATE", "NODE", "STATUS", "STARTED", "DURATION"},
 		[]int{10, 14, 14, 11, 20, 12},
 	)
+	t.EmptyMessage = "  No builds yet. Start one from Templates or New build."
 	return BuildsModel{table: t, db: db}
 }
 
@@ -188,13 +189,11 @@ func (m BuildsModel) View() string {
 		return b.String()
 	}
 
-	b.WriteString("\n")
-	b.WriteString(styles.SectionStyle.Render(" Build History "))
-	b.WriteString("\n\n")
+	b.WriteString(styles.PageHeader("Build history", fmt.Sprintf("%d recent builds · select a build to inspect its results", len(m.builds)), "", m.width))
 	b.WriteString(m.table.View())
 	b.WriteString("\n\n")
-	b.WriteString(styles.HelpBar(
-		styles.HelpEntry("enter", "details"),
-	))
+	if len(m.builds) > 0 {
+		b.WriteString(styles.HelpBar(styles.HelpEntry("enter", "details")))
+	}
 	return b.String()
 }
