@@ -90,9 +90,9 @@ func (m AppModel) workspace(content string) string {
 		divider := styles.MutedStyle.Render(strings.TrimSuffix(strings.Repeat("|\n", h), "\n"))
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.navigation(h), divider, " ", body)
 	}
-	footer := "f2 workspace  " + m.helpKeys()
+	footer := "ctrl+g workspace  " + m.helpKeys()
 	if m.navFocused {
-		footer = "j/k move  enter open  f2 close  ctrl+c quit"
+		footer = "ctrl+g close  j/k move  enter open"
 	}
 	return styles.Fit(title, m.width, 1) + "\n" + styles.Fit(styles.MutedStyle.Render(strings.Repeat("-", m.width)), m.width, 1) + "\n" + styles.Fit(body, m.width, h) + "\n" + styles.Fit("", m.width, 1) + "\n" + styles.Fit(footer, m.width, 1)
 }

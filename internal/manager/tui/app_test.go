@@ -46,7 +46,7 @@ func TestWorkspaceFitsAndNavigation(t *testing.T) {
 		}
 	}
 	m = testApp(t)
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyF2})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 	m = next.(AppModel)
 	next, _ = m.Update(key("2"))
 	m = next.(AppModel)
@@ -55,7 +55,7 @@ func TestWorkspaceFitsAndNavigation(t *testing.T) {
 	}
 	next, _ = m.Update(key("a"))
 	m = next.(AppModel)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyF2})
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 	m = next.(AppModel)
 	if m.navFocused || !m.inSubView() {
 		t.Fatal("navigation stole form focus")

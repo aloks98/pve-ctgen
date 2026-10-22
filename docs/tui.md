@@ -2,13 +2,14 @@
 
 Start with `pvectgen manager tui` (or add `--config /path/to/manager.yaml`).
 The initial screen is Templates. At 100 columns or wider, the workspace sidebar
-stays visible. In narrower terminals, F2 opens the same navigation as a menu.
+stays visible. In narrower terminals, Ctrl+G opens the same navigation as a menu.
+F2 remains available as an alias.
 80 × 24 is recommended; the compact layout supports at least 40 × 12.
 
 ## Navigation and definitions
 
-- F2 focuses the workspace menu; use j/k or arrows, then Enter. Number keys 1–9
-  select destinations while the menu has focus. F2 or Escape closes the menu.
+- Ctrl+G focuses the workspace menu; use j/k or arrows, then Enter. Number keys 1–9
+  select destinations while the menu has focus. Ctrl+G or Escape closes the menu.
 - Forms and confirmations retain keyboard focus. Escape returns to the previous
   stage; from a top-level destination it returns to Templates.
 - Templates: `/` filters by name, tag, profile or init type. Enter/Escape leaves

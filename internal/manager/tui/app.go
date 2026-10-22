@@ -121,7 +121,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width < 40 || m.height < 12 {
 			return m, nil
 		}
-		if !m.inSubView() && msg.String() == "f2" {
+		if !m.inSubView() && (msg.String() == "ctrl+g" || msg.String() == "f2") {
 			m.navFocused = !m.navFocused
 			for i, d := range destinations {
 				if d.view == m.currentView {

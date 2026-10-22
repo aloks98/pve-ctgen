@@ -24,7 +24,7 @@ Implementation steps, committed separately:
 
 | Step | Change | Verification |
 | --- | --- | --- |
-| 15 | Responsive workspace shell, persistent sidebar and compact F2 navigation | Terminal-size, form-focus and background-build tests |
+| 15 | Responsive workspace shell, persistent sidebar and compact Ctrl+G navigation | Terminal-size, form-focus and background-build tests |
 | 16 | Filterable template browser, selected details, profile editing, delete confirmation, adaptive tables/forms | Unicode/paging, filtered actions and focused-field visibility tests |
 | 17 | Guided build review with validated snapshots and live preflight gate | Failed/stale checks, invalid IDs, immutable requests and duplicate-submit tests |
 | 18 | Persistent progress logs, paused follow, explicit reconnect and remote cancellation | Race tests for replay and queue cancellation; live terminal checks |

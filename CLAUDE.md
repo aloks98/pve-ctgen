@@ -126,11 +126,11 @@ Auth: API key in `x-api-key` gRPC metadata, validated by unary+stream intercepto
 3. On workstation: `pvectgen manager node add --token <token> --display-name "prod"`
 
 ### Build Flow (TUI)
-1. Templates workspace → `b` for selected definition, or F2 → New build for multi-select.
+1. Templates workspace → `b` for selected definition, or Ctrl+G → New build for multi-select.
 2. Select node → target VM IDs → Review.
 3. Read-only preflight must pass before Enter submits the reviewed request snapshot.
 4. Live progress shows steps/logs; scrolling pauses follow, `f` resumes it.
-5. Escape backgrounds the build; F2 → Build progress returns. `r` reconnects after interruption.
+5. Escape backgrounds the build; Ctrl+G → Build progress returns. `r` reconnects after interruption.
 6. `x` then `y` cancels via the minion and skips queued builds; completed logs remain visible.
 7. Results are persisted to `builds/<uuid>.yaml`. See `docs/tui.md` for recovery after restart.
 
@@ -165,9 +165,9 @@ make deploy NODE=root@ip  # Deploy minion via SSH
 - Status tags: `[OK]` `[!!]` `[..]` `[--]` `[  ]` instead of Unicode
 - Spinners: ora-style line spinner (`-\|/`) for loading states
 - Templates workspace is the default; the legacy overview remains available from navigation
-- Persistent sidebar at 100+ columns; compact F2 navigation below that; contextual footer
+- Persistent sidebar at 100+ columns; compact Ctrl+G navigation below that; contextual footer
 - Scrollable viewports for cloud-init view and build detail
-- Number keys `[1]-[9]` select destinations while the F2 workspace menu has focus
+- Number keys `[1]-[9]` select destinations while the Ctrl+G workspace menu has focus
 
 ## Validation
 
