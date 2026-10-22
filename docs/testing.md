@@ -162,3 +162,32 @@ shut down and destroyed with its three owned volumes (system, EFI, and cloud-ini
 Its configuration and local-lvm volumes were confirmed absent. It had received
 the key update before deletion and is excluded from the final counts above.
 Hypervisor access keys and template disks were not changed in this rollout.
+
+## Four-host minion enrollment, 2026-10-23
+
+Tokyo (`192.168.100.1`), Osaka (`192.168.100.2`), Kyoto (`192.168.100.3`), and
+Rack-1 (`192.168.100.5`) were upgraded from minion `0.3.2` to the tested project
+binary `v0.3.2-33-g8ef4eb7`. Its embedded revision is
+`8ef4eb7a93ffbc1cc53ee43179e290c8f2cceb1a`, with an unmodified source tree at build
+time; subsequent repository changes were documentation only. Transferred binary
+SHA-256 hashes were checked before installation and after replacement.
+
+Existing minion configuration and API keys were retained. Each host received a
+TLS identity and the current systemd unit, including `UMask=0077`. The minion
+services were restarted individually and remain enabled at boot. Original
+binaries, configuration directories, and service units are backed up under
+`/root/pvectgen-minion-backup-20261023` on each host, accessible only to root.
+
+All four nodes were enrolled by IP on port `50051` in Fatman's default manager
+store, `/home/aloks98/.config/pvectgen/nodes.yaml`, with certificate pinning and
+API-key authentication. Enrollment credentials were not added to the repository;
+the node store, minion configuration, and TLS private keys have mode `0600`.
+
+Readiness checks identified missing `snippets` content support on Tokyo, Osaka,
+and Rack-1's existing `local` storage. It was enabled while preserving every
+previous content type; original `storage.cfg` files are in the corresponding
+host backups. Kyoto already supported snippets.
+
+Final live checks passed for each node: authenticated health, all 18 doctor
+checks, and VM inventory retrieval over pinned TLS. No build was submitted and
+no guest was stopped or rebooted during enrollment.
