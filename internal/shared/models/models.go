@@ -44,9 +44,9 @@ const (
 
 // InitConfig represents a stored init configuration (cloud-init YAML or Butane).
 type InitConfig struct {
-	Name      string    `yaml:"-" json:"name"`     // filename
-	Type      string    `yaml:"-" json:"type"`     // "cloudinit" or "ignition"
-	Content   string    `yaml:"-" json:"content"`  // file contents
+	Name      string    `yaml:"-" json:"name"`    // filename
+	Type      string    `yaml:"-" json:"type"`    // "cloudinit" or "ignition"
+	Content   string    `yaml:"-" json:"content"` // file contents
 	CreatedAt time.Time `yaml:"-" json:"created_at"`
 	UpdatedAt time.Time `yaml:"-" json:"updated_at"`
 }
@@ -56,6 +56,7 @@ type CloudInitConfig = InitConfig
 
 // Template represents a VM template definition.
 type Template struct {
+	Profile     string `yaml:"profile,omitempty" json:"profile"`
 	VMID        int    `yaml:"vm_id" json:"vm_id"`
 	Name        string `yaml:"name" json:"name"`
 	URL         string `yaml:"url" json:"url"`
@@ -84,10 +85,11 @@ type BuildStep struct {
 
 // Node represents a Proxmox node (Minion).
 type Node struct {
-	Name        string `yaml:"name" json:"name"`
-	DisplayName string `yaml:"display_name,omitempty" json:"display_name"`
-	Address     string `yaml:"address" json:"address"`
-	APIKey      string `yaml:"api_key" json:"api_key"`
+	Name           string `yaml:"name" json:"name"`
+	DisplayName    string `yaml:"display_name,omitempty" json:"display_name"`
+	Address        string `yaml:"address" json:"address"`
+	APIKey         string `yaml:"api_key" json:"api_key"`
+	TLSFingerprint string `yaml:"tls_fingerprint,omitempty" json:"tls_fingerprint"`
 }
 
 // Label returns DisplayName if set, otherwise Name.
@@ -100,13 +102,15 @@ func (n Node) Label() string {
 
 // Build represents a build execution record.
 type Build struct {
-	BuildID     string          `yaml:"build_id" json:"build_id"`
-	Template    string          `yaml:"template" json:"template"`
-	Node        string          `yaml:"node" json:"node"`
-	Status      string          `yaml:"status" json:"status"`
-	StartedAt   *time.Time      `yaml:"started_at,omitempty" json:"started_at,omitempty"`
-	CompletedAt *time.Time      `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
-	Steps       []BuildStepResult `yaml:"steps,omitempty" json:"steps,omitempty"`
+	LastSequence int64             `yaml:"last_sequence,omitempty" json:"last_sequence"`
+	Log          string            `yaml:"log,omitempty" json:"log"`
+	BuildID      string            `yaml:"build_id" json:"build_id"`
+	Template     string            `yaml:"template" json:"template"`
+	Node         string            `yaml:"node" json:"node"`
+	Status       string            `yaml:"status" json:"status"`
+	StartedAt    *time.Time        `yaml:"started_at,omitempty" json:"started_at,omitempty"`
+	CompletedAt  *time.Time        `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+	Steps        []BuildStepResult `yaml:"steps,omitempty" json:"steps,omitempty"`
 }
 
 // BuildStepResult represents the result of a single build step.
@@ -117,4 +121,17 @@ type BuildStepResult struct {
 	Log         string     `yaml:"log,omitempty" json:"log,omitempty"`
 	StartedAt   *time.Time `yaml:"started_at,omitempty" json:"started_at,omitempty"`
 	CompletedAt *time.Time `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+}
+
+// BuildProfile describes node resources and optional site-specific guest settings.
+type BuildProfile struct {
+	Storage           string   `yaml:"storage"`
+	SnippetStorage    string   `yaml:"snippet_storage"`
+	SnippetsPath      string   `yaml:"snippets_path"`
+	Bridge            string   `yaml:"bridge"`
+	DiskSize          string   `yaml:"disk_size"`
+	DiskFormat        string   `yaml:"disk_format"`
+	SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys"`
+	Timezone          string   `yaml:"timezone"`
+	AptProxy          string   `yaml:"apt_proxy"`
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aloks98/pve-ctgen/internal/shared/configutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,7 +18,7 @@ func Validate(content string) error {
 
 	// Must be valid YAML
 	var parsed map[string]interface{}
-	if err := yaml.Unmarshal([]byte(content), &parsed); err != nil {
+	if err := configutil.Decode([]byte(content), &parsed); err != nil {
 		return fmt.Errorf("invalid YAML syntax: %w", err)
 	}
 
