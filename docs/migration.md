@@ -27,7 +27,7 @@ Rebuilding an existing template requires `manager build run --overwrite`. Builds
 
 ## Guest defaults
 
-Bundled cloud-init defaults no longer set fixed hostnames, shared passwords, personal SSH keys or an APT proxy. Passwords are locked and root login is disabled. Configure `ssh_authorized_keys` on the selected node profile before building guests that need SSH access: keys are applied to `admin` for cloud-init and `core` for Ignition. Optional `timezone` and `apt_proxy` settings also live in the profile; use the proxy only for appropriate Debian/Ubuntu profiles.
+Bundled defaults no longer set fixed hostnames, shared passwords or an APT proxy. Passwords are locked and cloud-init root access is disabled. The bundled initialization configs now include the approved Titan Air and Fatman public keys for `admin` (cloud-init) and `core` (Ignition). A nonempty `ssh_authorized_keys` list on the selected node profile replaces the bundled keys for that user; an empty list leaves the bundled keys intact. Optional `timezone` and `apt_proxy` settings also live in the profile; use the proxy only for appropriate Debian/Ubuntu profiles.
 
 Existing imported guest files are preserved by ordinary `manager import`. Review and update them separately, or back up customizations before `manager import --force`, which replaces bundled entries. Existing deployed guests are not modified by editing the defaults. Static networking for Ignition must be supplied in the Butane configuration; launch rejects unsupported static overrides rather than silently ignoring them.
 

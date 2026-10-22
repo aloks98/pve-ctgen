@@ -7,7 +7,9 @@ version: 1.0.0
 passwd:
   users:
     - name: core
-      ssh_authorized_keys: []
+      ssh_authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPuoDofo5+qGtLAHzvsvjZKdK6N+kmi4qI3JSwOqTt2p aloks98@titanair.local
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbY4fAHtL2YnQji5aqrjpTCcmC9b0s0BtJebPjAEVIJ aloks98@fatman
 
 storage:
   files:

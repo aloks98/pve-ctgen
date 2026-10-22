@@ -15,14 +15,15 @@ users:
   - name: root
     lock_passwd: true
     shell: /usr/bin/fish
-    ssh_authorized_keys: []
   - name: admin
     lock_passwd: true
     gecos: Administrator
     groups: wheel, docker
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /usr/bin/fish
-    ssh_authorized_keys: []
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPuoDofo5+qGtLAHzvsvjZKdK6N+kmi4qI3JSwOqTt2p aloks98@titanair.local
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbY4fAHtL2YnQji5aqrjpTCcmC9b0s0BtJebPjAEVIJ aloks98@fatman
 
 ssh_pwauth: false
 disable_root: true
