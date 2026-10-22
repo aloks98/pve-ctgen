@@ -21,11 +21,16 @@ func (db *DB) GetLaunchDefaults(templateName string) (map[string]string, error) 
 
 // SaveLaunchDefaults persists the launch field values for a template.
 func (db *DB) SaveLaunchDefaults(templateName string, vals map[string]string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	all := map[string]map[string]string{}
-	_ = readYAML(db.path(launchDefaultsFile), &all)
+	if err := readYAML(db.path(launchDefaultsFile), &all); err != nil {
+		return err
+	}
 	all[templateName] = vals
 	return writeYAML(db.path(launchDefaultsFile), all)
 }

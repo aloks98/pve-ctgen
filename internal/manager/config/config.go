@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
+	"github.com/aloks98/pve-ctgen/internal/shared/configutil"
 )
 
 // Config holds the Manager configuration.
@@ -40,7 +40,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := configutil.Decode(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
@@ -50,5 +50,8 @@ func Load(path string) (*Config, error) {
 		cfg.DataDir = filepath.Join(home, cfg.DataDir[1:])
 	}
 
+	if !filepath.IsAbs(cfg.DataDir) {
+		return nil, fmt.Errorf("data_dir must be an absolute path")
+	}
 	return cfg, nil
 }

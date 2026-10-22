@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"github.com/aloks98/pve-ctgen/internal/shared/validation"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/aloks98/pve-ctgen/internal/shared/cloudinit"
+	"github.com/aloks98/pve-ctgen/internal/shared/filelock"
 	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
 	"github.com/aloks98/pve-ctgen/internal/shared/models"
 )
@@ -32,9 +35,15 @@ type BuildWithDetails struct {
 // Open creates (if needed) the data directory and returns a store.
 func Open(dir string) (*DB, error) {
 	for _, sub := range []string{"", "cloudinit", "ignition", "builds"} {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0700); err != nil {
 			return nil, fmt.Errorf("create %s: %w", sub, err)
 		}
+	}
+	if st, err := os.Lstat(filepath.Join(dir, "nodes.yaml")); err == nil && !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("nodes.yaml must be a regular file")
+	}
+	if err := os.Chmod(filepath.Join(dir, "nodes.yaml"), 0600); err != nil && !os.IsNotExist(err) {
+		return nil, err
 	}
 	return &DB{dir: dir}, nil
 }
@@ -44,10 +53,10 @@ func (db *DB) Close() error { return nil }
 
 // --- helpers ---
 
-func (db *DB) path(name string) string          { return filepath.Join(db.dir, name) }
-func (db *DB) ciDir() string                     { return filepath.Join(db.dir, "cloudinit") }
-func (db *DB) ignDir() string                    { return filepath.Join(db.dir, "ignition") }
-func (db *DB) buildsDir() string                 { return filepath.Join(db.dir, "builds") }
+func (db *DB) path(name string) string { return filepath.Join(db.dir, name) }
+func (db *DB) ciDir() string           { return filepath.Join(db.dir, "cloudinit") }
+func (db *DB) ignDir() string          { return filepath.Join(db.dir, "ignition") }
+func (db *DB) buildsDir() string       { return filepath.Join(db.dir, "builds") }
 
 // initDir returns the directory for the given init type.
 func (db *DB) initDir(initType string) string {
@@ -67,7 +76,7 @@ func detectInitType(name string) string {
 }
 
 func readYAML(path string, v interface{}) error {
-	data, err := os.ReadFile(path)
+	data, err := readRegular(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // empty is fine
@@ -82,7 +91,7 @@ func writeYAML(path string, v interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return fileutil.AtomicWrite(path, data, 0600)
 }
 
 // ============================================================
@@ -111,20 +120,35 @@ func fileExists(p string) bool {
 }
 
 func (db *DB) CreateCloudInit(name, content string) (int64, error) {
+	if err := validation.Name(name); err != nil {
+		return 0, err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+
 	p, _ := db.resolveInitPath(name)
 	if fileExists(p) {
 		return 0, fmt.Errorf("insert cloudinit: UNIQUE constraint failed: %s", name)
 	}
-	return 0, os.WriteFile(p, []byte(content), 0644)
+	return 0, fileutil.AtomicWrite(p, []byte(content), 0600)
 }
 
 func (db *DB) GetCloudInit(name string) (*models.CloudInitConfig, error) {
+	if err := validation.Name(name); err != nil {
+		return nil, err
+	}
 	p, t := db.resolveInitPath(name)
-	data, err := os.ReadFile(p)
+	data, err := readRegular(p)
 	if err != nil {
 		return nil, fmt.Errorf("get init %q: %w", name, err)
 	}
-	info, _ := os.Stat(p)
+	info, err := os.Stat(p)
+	if err != nil {
+		return nil, err
+	}
 	return &models.CloudInitConfig{
 		Name:      name,
 		Type:      t,
@@ -146,7 +170,10 @@ func (db *DB) ListCloudInits() ([]models.CloudInitConfig, error) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 				continue
 			}
-			info, _ := e.Info()
+			info, err := e.Info()
+			if err != nil {
+				return nil, err
+			}
 			configs = append(configs, models.CloudInitConfig{
 				Name:      e.Name(),
 				Type:      models.InitTypeCloudInit,
@@ -154,6 +181,8 @@ func (db *DB) ListCloudInits() ([]models.CloudInitConfig, error) {
 				UpdatedAt: info.ModTime(),
 			})
 		}
+	} else {
+		return nil, err
 	}
 	// ignition configs (Butane source files)
 	if entries, err := os.ReadDir(db.ignDir()); err == nil {
@@ -165,7 +194,10 @@ func (db *DB) ListCloudInits() ([]models.CloudInitConfig, error) {
 			if !strings.HasSuffix(lower, ".bu") && !strings.HasSuffix(lower, ".butane") {
 				continue
 			}
-			info, _ := e.Info()
+			info, err := e.Info()
+			if err != nil {
+				return nil, err
+			}
 			configs = append(configs, models.CloudInitConfig{
 				Name:      e.Name(),
 				Type:      models.InitTypeIgnition,
@@ -173,20 +205,40 @@ func (db *DB) ListCloudInits() ([]models.CloudInitConfig, error) {
 				UpdatedAt: info.ModTime(),
 			})
 		}
+	} else {
+		return nil, err
 	}
 	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
 	return configs, nil
 }
 
 func (db *DB) UpdateCloudInit(name, content string) error {
+	if err := validation.Name(name); err != nil {
+		return err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	p, _ := db.resolveInitPath(name)
 	if !fileExists(p) {
 		return fmt.Errorf("init %q not found", name)
 	}
-	return os.WriteFile(p, []byte(content), 0644)
+	return fileutil.AtomicWrite(p, []byte(content), 0600)
 }
 
 func (db *DB) DeleteCloudInit(name string) error {
+	if err := validation.Name(name); err != nil {
+		return err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	p, _ := db.resolveInitPath(name)
 	if err := os.Remove(p); err != nil {
 		return fmt.Errorf("init %q not found", name)
@@ -211,10 +263,19 @@ func (db *DB) saveTemplates(templates []models.Template) error {
 }
 
 func (db *DB) CreateTemplate(t *models.Template) (int64, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	if err := validateTemplate(t); err != nil {
+		return 0, err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
 
-	templates, _ := db.loadTemplates()
+	templates, err := db.loadTemplates()
+	if err != nil {
+		return 0, err
+	}
 	for _, existing := range templates {
 		if existing.Name == t.Name {
 			return 0, fmt.Errorf("insert template: UNIQUE constraint failed: templates.name")
@@ -228,7 +289,10 @@ func (db *DB) CreateTemplate(t *models.Template) (int64, error) {
 }
 
 func (db *DB) GetTemplate(name string) (*models.Template, error) {
-	templates, _ := db.loadTemplates()
+	templates, err := db.loadTemplates()
+	if err != nil {
+		return nil, err
+	}
 	for _, t := range templates {
 		if t.Name == name {
 			return &t, nil
@@ -242,10 +306,16 @@ func (db *DB) ListTemplates() ([]models.Template, error) {
 }
 
 func (db *DB) UpdateTemplate(name string, updates map[string]interface{}) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	templates, _ := db.loadTemplates()
+	templates, err := db.loadTemplates()
+	if err != nil {
+		return err
+	}
 	for i, t := range templates {
 		if t.Name == name {
 			if v, ok := updates["name"]; ok {
@@ -270,11 +340,22 @@ func (db *DB) UpdateTemplate(name string, updates map[string]interface{}) error 
 					templates[i].CloudInit = v.(string)
 				}
 			}
+			if v, ok := updates["profile"]; ok {
+				templates[i].Profile = v.(string)
+			}
 			if v, ok := updates["init_type"]; ok {
 				if v == nil {
 					templates[i].InitType = ""
 				} else {
 					templates[i].InitType = v.(string)
+				}
+			}
+			if err := validateTemplate(&templates[i]); err != nil {
+				return err
+			}
+			for j, other := range templates {
+				if i != j && (other.Name == templates[i].Name || other.VMID == templates[i].VMID) {
+					return fmt.Errorf("template name or VM ID already exists")
 				}
 			}
 			return db.saveTemplates(templates)
@@ -284,10 +365,16 @@ func (db *DB) UpdateTemplate(name string, updates map[string]interface{}) error 
 }
 
 func (db *DB) DeleteTemplate(name string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	templates, _ := db.loadTemplates()
+	templates, err := db.loadTemplates()
+	if err != nil {
+		return err
+	}
 	for i, t := range templates {
 		if t.Name == name {
 			templates = append(templates[:i], templates[i+1:]...)
@@ -314,10 +401,16 @@ func (db *DB) saveSteps(steps []models.BuildStep) error {
 }
 
 func (db *DB) CreateBuildStep(name, command string, sortOrder int) (int64, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
 
-	steps, _ := db.loadSteps()
+	steps, err := db.loadSteps()
+	if err != nil {
+		return 0, err
+	}
 	// Insert at the right position
 	newStep := models.BuildStep{Name: name, Command: command}
 	if sortOrder <= 0 || sortOrder > len(steps) {
@@ -333,10 +426,16 @@ func (db *DB) ListBuildSteps() ([]models.BuildStep, error) {
 }
 
 func (db *DB) UpdateBuildStep(name string, updates map[string]interface{}) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	steps, _ := db.loadSteps()
+	steps, err := db.loadSteps()
+	if err != nil {
+		return err
+	}
 	for i, s := range steps {
 		if s.Name == name {
 			if v, ok := updates["name"]; ok {
@@ -352,10 +451,16 @@ func (db *DB) UpdateBuildStep(name string, updates map[string]interface{}) error
 }
 
 func (db *DB) DeleteBuildStep(name string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	steps, _ := db.loadSteps()
+	steps, err := db.loadSteps()
+	if err != nil {
+		return err
+	}
 	for i, s := range steps {
 		if s.Name == name {
 			steps = append(steps[:i], steps[i+1:]...)
@@ -366,10 +471,16 @@ func (db *DB) DeleteBuildStep(name string) error {
 }
 
 func (db *DB) SwapBuildStepOrder(idxA, idxB int) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	steps, _ := db.loadSteps()
+	steps, err := db.loadSteps()
+	if err != nil {
+		return err
+	}
 	if idxA < 0 || idxA >= len(steps) || idxB < 0 || idxB >= len(steps) {
 		return fmt.Errorf("index out of range")
 	}
@@ -378,8 +489,11 @@ func (db *DB) SwapBuildStepOrder(idxA, idxB int) error {
 }
 
 func (db *DB) ResetBuildSteps(defaults []models.Step) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	steps := make([]models.BuildStep, len(defaults))
 	for i, s := range defaults {
@@ -404,27 +518,41 @@ func (db *DB) saveNodes(nodes []models.Node) error {
 	return writeYAML(db.path("nodes.yaml"), nodes)
 }
 
-func (db *DB) CreateNode(name, displayName, address, apiKey string) (int64, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+func (db *DB) CreateNode(name, displayName, address, apiKey string, fingerprints ...string) (int64, error) {
+	unlock, err := db.lock()
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
 
-	nodes, _ := db.loadNodes()
+	nodes, err := db.loadNodes()
+	if err != nil {
+		return 0, err
+	}
 	for _, n := range nodes {
 		if n.Name == name {
 			return 0, fmt.Errorf("insert node: UNIQUE constraint failed: %s", name)
 		}
 	}
+	var pin string
+	if len(fingerprints) > 0 {
+		pin = fingerprints[0]
+	}
 	nodes = append(nodes, models.Node{
-		Name:        name,
-		DisplayName: displayName,
-		Address:     address,
-		APIKey:      apiKey,
+		Name:           name,
+		DisplayName:    displayName,
+		Address:        address,
+		APIKey:         apiKey,
+		TLSFingerprint: pin,
 	})
 	return 0, db.saveNodes(nodes)
 }
 
 func (db *DB) GetNode(name string) (*models.Node, error) {
-	nodes, _ := db.loadNodes()
+	nodes, err := db.loadNodes()
+	if err != nil {
+		return nil, err
+	}
 	for _, n := range nodes {
 		if n.Name == name || n.DisplayName == name {
 			return &n, nil
@@ -438,10 +566,16 @@ func (db *DB) ListNodes() ([]models.Node, error) {
 }
 
 func (db *DB) UpdateNodeDisplayName(name, displayName string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	nodes, _ := db.loadNodes()
+	nodes, err := db.loadNodes()
+	if err != nil {
+		return err
+	}
 	for i, n := range nodes {
 		if n.Name == name || n.DisplayName == name {
 			nodes[i].DisplayName = displayName
@@ -452,10 +586,16 @@ func (db *DB) UpdateNodeDisplayName(name, displayName string) error {
 }
 
 func (db *DB) DeleteNode(name string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
-	nodes, _ := db.loadNodes()
+	nodes, err := db.loadNodes()
+	if err != nil {
+		return err
+	}
 	for i, n := range nodes {
 		if n.Name == name || n.DisplayName == name {
 			nodes = append(nodes[:i], nodes[i+1:]...)
@@ -474,6 +614,20 @@ func (db *DB) buildPath(buildID string) string {
 }
 
 func (db *DB) CreateBuild(buildID, templateName, nodeName string) (int64, error) {
+	if err := validation.Name(buildID); err != nil {
+		return 0, err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+
+	if _, err := os.Stat(db.buildPath(buildID)); err == nil {
+		return 0, fmt.Errorf("build %q already exists", buildID)
+	} else if !os.IsNotExist(err) {
+		return 0, err
+	}
 	now := time.Now()
 	b := models.Build{
 		BuildID:   buildID,
@@ -486,6 +640,9 @@ func (db *DB) CreateBuild(buildID, templateName, nodeName string) (int64, error)
 }
 
 func (db *DB) GetBuild(buildID string) (*models.Build, error) {
+	if err := validation.Name(buildID); err != nil {
+		return nil, err
+	}
 	var b models.Build
 	if err := readYAML(db.buildPath(buildID), &b); err != nil {
 		return nil, fmt.Errorf("get build %q: %w", buildID, err)
@@ -497,12 +654,21 @@ func (db *DB) GetBuild(buildID string) (*models.Build, error) {
 }
 
 func (db *DB) UpdateBuildStatus(buildID, status string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	if err := validation.Name(buildID); err != nil {
+		return err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	var b models.Build
 	if err := readYAML(db.buildPath(buildID), &b); err != nil {
 		return err
+	}
+	if b.BuildID == "" {
+		return fmt.Errorf("build %q not found", buildID)
 	}
 	b.Status = status
 	if status == "completed" || status == "failed" || status == "cancelled" {
@@ -515,7 +681,7 @@ func (db *DB) UpdateBuildStatus(buildID, status string) error {
 func (db *DB) ListBuilds(status, template, node string, limit int) ([]models.Build, error) {
 	entries, err := os.ReadDir(db.buildsDir())
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	var builds []models.Build
 	for _, e := range entries {
@@ -524,7 +690,7 @@ func (db *DB) ListBuilds(status, template, node string, limit int) ([]models.Bui
 		}
 		var b models.Build
 		if err := readYAML(filepath.Join(db.buildsDir(), e.Name()), &b); err != nil {
-			continue
+			return nil, fmt.Errorf("read build %s: %w", e.Name(), err)
 		}
 		if status != "" && b.Status != status {
 			continue
@@ -572,11 +738,22 @@ func (db *DB) ListBuildsWithDetails(limit int) ([]BuildWithDetails, error) {
 // --- Build step results (stored inline in the build YAML) ---
 
 func (db *DB) CreateBuildStepResult(buildID, stepName string, stepIndex int) (int64, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	if err := validation.Name(buildID); err != nil {
+		return 0, err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
 
 	var b models.Build
-	readYAML(db.buildPath(buildID), &b)
+	if err := readYAML(db.buildPath(buildID), &b); err != nil {
+		return 0, err
+	}
+	if b.BuildID == "" {
+		return 0, fmt.Errorf("build %q not found", buildID)
+	}
 	now := time.Now()
 	b.Steps = append(b.Steps, models.BuildStepResult{
 		StepName:  stepName,
@@ -588,11 +765,22 @@ func (db *DB) CreateBuildStepResult(buildID, stepName string, stepIndex int) (in
 }
 
 func (db *DB) UpdateBuildStepResult(buildID, stepName, status, logLine string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	if err := validation.Name(buildID); err != nil {
+		return err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	var b models.Build
-	readYAML(db.buildPath(buildID), &b)
+	if err := readYAML(db.buildPath(buildID), &b); err != nil {
+		return err
+	}
+	if b.BuildID == "" {
+		return fmt.Errorf("build %q not found", buildID)
+	}
 	for i, s := range b.Steps {
 		if s.StepName == stepName {
 			b.Steps[i].Status = status
@@ -610,11 +798,22 @@ func (db *DB) UpdateBuildStepResult(buildID, stepName, status, logLine string) e
 }
 
 func (db *DB) AppendBuildStepLog(buildID, stepName, logLine string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	if err := validation.Name(buildID); err != nil {
+		return err
+	}
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	var b models.Build
-	readYAML(db.buildPath(buildID), &b)
+	if err := readYAML(db.buildPath(buildID), &b); err != nil {
+		return err
+	}
+	if b.BuildID == "" {
+		return fmt.Errorf("build %q not found", buildID)
+	}
 	for i, s := range b.Steps {
 		if s.StepName == stepName {
 			b.Steps[i].Log += logLine + "\n"
@@ -625,9 +824,15 @@ func (db *DB) AppendBuildStepLog(buildID, stepName, logLine string) error {
 }
 
 func (db *DB) GetBuildStepResults(buildID string) ([]models.BuildStepResult, error) {
+	if err := validation.Name(buildID); err != nil {
+		return nil, err
+	}
 	var b models.Build
 	if err := readYAML(db.buildPath(buildID), &b); err != nil {
 		return nil, err
+	}
+	if b.BuildID == "" {
+		return nil, fmt.Errorf("build %q not found", buildID)
 	}
 	return b.Steps, nil
 }
@@ -637,6 +842,11 @@ func (db *DB) GetBuildStepResults(buildID string) ([]models.BuildStepResult, err
 // ============================================================
 
 func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error {
+	unlock, err := db.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	// Import cloud-init configs
 	if cloudinitDir != "" {
 		entries, err := os.ReadDir(cloudinitDir)
@@ -653,13 +863,13 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 				return fmt.Errorf("read %s: %w", entry.Name(), err)
 			}
 			if err := cloudinit.Validate(string(content)); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: %s: %v (importing anyway)\n", entry.Name(), err)
+				return fmt.Errorf("invalid cloud-init %s: %w", entry.Name(), err)
 			}
 			dst := filepath.Join(db.ciDir(), entry.Name())
 			if _, err := os.Stat(dst); err == nil && !force {
 				continue // skip existing
 			}
-			if err := os.WriteFile(dst, content, 0644); err != nil {
+			if err := fileutil.AtomicWrite(dst, content, 0600); err != nil {
 				return fmt.Errorf("write %s: %w", entry.Name(), err)
 			}
 		}
@@ -684,7 +894,7 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 				if _, err := os.Stat(dst); err == nil && !force {
 					continue
 				}
-				if err := os.WriteFile(dst, content, 0644); err != nil {
+				if err := fileutil.AtomicWrite(dst, content, 0600); err != nil {
 					return fmt.Errorf("write %s: %w", entry.Name(), err)
 				}
 			}
@@ -697,8 +907,18 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 		if err != nil {
 			return fmt.Errorf("load steps: %w", err)
 		}
-		if err := db.ResetBuildSteps(steps); err != nil {
-			return fmt.Errorf("reset steps: %w", err)
+		_, statErr := os.Stat(db.path("steps.yaml"))
+		if force || os.IsNotExist(statErr) {
+			items := make([]models.BuildStep, len(steps))
+			for i, s := range steps {
+				items[i] = models.BuildStep{Name: s.Name, Command: s.Command}
+			}
+			err = db.saveSteps(items)
+		} else if statErr != nil {
+			err = statErr
+		}
+		if err != nil {
+			return err
 		}
 	}
 
@@ -708,7 +928,10 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 		if err != nil {
 			return fmt.Errorf("load images: %w", err)
 		}
-		templates, _ := db.loadTemplates()
+		templates, err := db.loadTemplates()
+		if err != nil {
+			return err
+		}
 		existingNames := make(map[string]int)
 		existingVMIDs := make(map[int]int)
 		for i, t := range templates {
@@ -731,16 +954,31 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 				CloudInit:   img.Vendor,
 				InitType:    initType,
 			}
+			if err := validateTemplate(&t); err != nil {
+				return err
+			}
+			nameIdx, nameExists := existingNames[img.Name]
+			idIdx, idExists := existingVMIDs[img.ID]
+			if nameExists && idExists && nameIdx != idIdx {
+				return fmt.Errorf("import %s conflicts with another template's VM ID", img.Name)
+			}
 			if idx, ok := existingNames[img.Name]; ok {
 				if force {
 					templates[idx] = t
 				}
-			} else if _, ok := existingVMIDs[img.ID]; ok {
+			} else if idx, ok := existingVMIDs[img.ID]; ok {
 				if !force {
 					continue
 				}
+				templates[idx] = t
 			} else {
 				templates = append(templates, t)
+			}
+			clear(existingNames)
+			clear(existingVMIDs)
+			for i, t := range templates {
+				existingNames[t.Name] = i
+				existingVMIDs[t.VMID] = i
 			}
 		}
 		if err := db.saveTemplates(templates); err != nil {
@@ -749,4 +987,59 @@ func (db *DB) Seed(imagesPath, stepsPath, cloudinitDir string, force bool) error
 	}
 
 	return nil
+}
+
+func (db *DB) lock() (func(), error) {
+	db.mu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	release, err := filelock.Acquire(ctx, db.path(".store.lock"))
+	cancel()
+	if err != nil {
+		db.mu.Unlock()
+		return nil, err
+	}
+	return func() { release(); db.mu.Unlock() }, nil
+}
+
+func validateTemplate(t *models.Template) error {
+	if t == nil {
+		return fmt.Errorf("template is required")
+	}
+	if t.VMID < 100 || t.VMID > 999999999 {
+		return fmt.Errorf("VM ID must be between 100 and 999999999")
+	}
+	if err := validation.Name(t.Name); err != nil {
+		return err
+	}
+	if err := validation.URL(t.URL); err != nil {
+		return err
+	}
+	if err := validation.URL(t.ChecksumURL); err != nil {
+		return fmt.Errorf("checksum URL: %w", err)
+	}
+	if t.CloudInit != "" {
+		if err := validation.Name(t.CloudInit); err != nil {
+			return err
+		}
+	}
+	if t.Profile != "" {
+		if err := validation.Name(t.Profile); err != nil {
+			return err
+		}
+	}
+	if t.EffectiveInitType() != "cloudinit" && t.EffectiveInitType() != "ignition" {
+		return fmt.Errorf("unknown init type")
+	}
+	return nil
+}
+
+func readRegular(path string) ([]byte, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("refusing non-regular file %s", path)
+	}
+	return os.ReadFile(path)
 }
