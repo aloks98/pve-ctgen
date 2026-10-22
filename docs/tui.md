@@ -3,7 +3,6 @@
 Start with `pvectgen manager tui` (or add `--config /path/to/manager.yaml`).
 The initial screen is Templates. At 100 columns or wider, the workspace sidebar
 stays visible. In narrower terminals, Ctrl+G opens the same navigation as a menu.
-F2 remains available as an alias.
 80 × 24 is recommended; the compact layout supports at least 40 × 12.
 
 ## Navigation and definitions
