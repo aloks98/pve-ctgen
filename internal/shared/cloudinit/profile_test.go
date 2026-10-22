@@ -156,3 +156,18 @@ func TestMaintenancePolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyProfileDocumentsAndIgnitionRevocation(t *testing.T) {
+	for _, kind := range []string{"ignition", "cloudinit"} {
+		if _, err := ApplyProfile([]byte("null"), kind, models.BuildProfile{PackageCleanup: kind == "cloudinit"}); err == nil {
+			t.Fatalf("accepted null %s", kind)
+		}
+	}
+	out, err := ApplyProfile([]byte(`{"ignition":{"version":"3.3.0"}}`), "ignition", models.BuildProfile{SSHKeysMode: "replace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "sshAuthorizedKeys") {
+		t.Fatalf("empty replacement emitted invalid null keys: %s", out)
+	}
+}

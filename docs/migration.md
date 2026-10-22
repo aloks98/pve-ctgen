@@ -39,7 +39,11 @@ Locale setup sets `LANG=en_US.UTF-8` without globally forcing `LC_ALL`. The misl
 
 Existing imported guest files are preserved by ordinary `manager import`. Review and update them separately, or back up customizations before `manager import --force`, which replaces bundled entries. Existing deployed guests are not modified by editing the defaults. Static networking for Ignition must be supplied in the Butane configuration; launch rejects unsupported static overrides rather than silently ignoring them.
 
-Fedora defaults use [Docker's DNF5 repository command](https://docs.docker.com/engine/install/fedora/) and the [English locale package](https://packages.fedoraproject.org/pkgs/glibc/glibc-langpack-en/). Flatcar uses the official, version-pinned [Proxmox image](https://www.flatcar.org/docs/latest/deploy/virt-options/proxmoxve/) and its SHA-512 digest. Image versions are otherwise unchanged in this phase.
+AlmaLinux/Rocky enable CRB and install EPEL before installing Fish and other EPEL packages, following the [distribution repository guidance](https://wiki.almalinux.org/repos/Extras). Required bootstrap failures stop provisioning rather than being hidden. The admin primary group is created/reused explicitly, including on Ubuntu images where that group already exists.
+
+Flatcar downloads its pinned Kubernetes extension through Ignition with SHA-256 verification before normal services start, following the [official extension provisioning workflow](https://flatcar.github.io/sysext-bakery/kubernetes/). Update the version, URL, symlink target, and release checksum together. It uses the extension’s packaged kubelet/kubeadm units; cluster initialization/join is still a separate operation.
+
+Fedora defaults use [Docker's DNF5 repository command](https://docs.docker.com/engine/install/fedora/) and the [English locale package](https://packages.fedoraproject.org/pkgs/glibc/glibc-langpack-en/). Flatcar uses the official, version-pinned [Proxmox image](https://www.flatcar.org/docs/latest/deploy/virt-options/proxmoxve/) and its SHA-512 digest. Image versions are otherwise unchanged in this phase; the Fedora 43 tag now matches its image version.
 
 ## Jobs and command behavior
 

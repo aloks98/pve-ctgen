@@ -49,7 +49,7 @@ PVECTGEN_LIVE_CONFIG=/var/lib/pvectgen-review-test/minion.yaml \
 
 `TestLiveJobs` requires a `broken` profile referencing nonexistent storage and fixture URLs `/disk.qcow2` and `/SHA256SUMS` on loopback port 50062. It executes a cancellable shell job against an unused ID and checks the child process. `TestLiveGuards` is a separate opt-in test using `PVECTGEN_LIVE_TEST_NODE`; it requires all three reserved IDs free, creates named diskless fixtures, and deletes only those fixtures.
 
-Only Debian guest boot was exercised end to end. Other bundled cloud-init files and Flatcar Butane were imported/resolved locally; their full guest provisioning, Kubernetes extension downloads, alternate storage backends and multi-node fleet creation were not live-tested.
+That initial review exercised only Debian guest boot end to end. The later guest-config verification below covers additional distributions and Flatcar. Alternate storage backends and multi-node fleet creation remain untested.
 
 ## TUI overhaul verification, 2026-10-23
 
@@ -95,3 +95,21 @@ and Ctrl+G navigation. The earlier HTML preview used the canvas color as its own
 background, which masked this bug; cell-level terminal checks are necessary.
 The isolated remote PTY smoke test on `192.168.100.1` also passed again with this
 fix; its temporary binary, minion and scratch store were removed afterward.
+
+
+## Guest access and provisioning review, 2026-10-23
+
+Local checks cover central-key drift, all bundled cloud-init schemas, shell/Fish syntax, embedded import/Butane resolution, profile key merge/replacement, Docker opt-in, independent upgrade/cleanup/journal settings, unsupported Ignition policies, and repeated profile application. Package-bootstrap command stubs verified that CRB/EPEL setup precedes dependent packages and failures stop the script. The full Go suite, profile/asset race tests, and `go vet ./...` passed.
+
+Live tests used isolated linked clones on Tokyo, IDs `998200`–`998207`, with private snippet storage `pvectgen-guest-review`. The tested cached images were Debian 13, Ubuntu 24.04, AlmaLinux 10, Rocky 9, Fedora 44, and Flatcar 4593.2.1. Fedora 44 exercises the shared Fedora config; the repository's Fedora 43 image was not downloaded or booted during this pass. Other major-version variants sharing the same config were also not separately booted.
+
+- Root and normal-user key login were exercised using Fatman's key; both Titan Air and Fatman fingerprints were checked in guest authorized keys. Titan Air's private key was not available, so its authentication was verified by installed public key only.
+- Effective sshd policy allowed root public keys and disabled password/keyboard-interactive authentication.
+- Cloud-init reported completion with no errors or recoverable errors on the final tested configurations. Fish and MOTD output were checked. Ubuntu tests exposed an existing `admin` group and an incorrect `sshd.service` name; fresh clones verified both fixes.
+- AlmaLinux/Rocky installed their EPEL-dependent packages after repository setup. Cloud-init base guests had no Docker or custom maintenance schedule.
+- Debian and Fedora completed Docker-enabled profiles with Engine/Compose running and a journal-only maintenance timer. Rocky's optional installer also completed successfully. Debian's initial Docker CDN download was slow but completed without intervention.
+- Flatcar downloaded the Kubernetes v1.35.5 extension; its on-disk SHA-256 matched the pinned release checksum. Containerd's CRI plugins reported `ok`, forwarding sysctls were set, and the packaged kubelet/kubeadm units were present. Root access and the extension persisted after reboot. No Kubernetes cluster was initialized or joined.
+
+Tokyo's ten existing saved guest snippets received a separate SSH-only update: the retired `aloksahoo@mac` key was removed, Titan Air/Fatman were added, and root key login was enabled. Existing `aloks98` users, node keys (`root@tokyo`, `root@kyoto`, `root@osaka`), MOTDs, packages, commands, proxy settings, and per-VM hostnames were preserved. Cloud-init/Ignition schemas were checked and uploaded hashes verified. Original snippets are backed up under `/root/pvectgen-snippet-backup-20261023-021954` on Tokyo. This updates provisioning files, not authorized keys inside existing running VMs. Broader provisioning changes live in the project defaults and require a new build/import to replace legacy snippets.
+
+All eight test clones and their disks, temporary snippet storage, and remote staging files were removed. Production guest IDs `400, 401, 402, 403, 406` remained running and the production minion remained active. The snippet backup is intentionally retained.

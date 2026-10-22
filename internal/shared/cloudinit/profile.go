@@ -30,6 +30,9 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 		if err := json.Unmarshal(content, &cfg); err != nil {
 			return nil, err
 		}
+		if cfg == nil {
+			return nil, fmt.Errorf("Ignition content must be an object")
+		}
 		if len(p.SSHAuthorizedKeys) > 0 || p.SSHKeysMode == "replace" {
 			passwd, _ := cfg["passwd"].(map[string]interface{})
 			if passwd == nil {
@@ -45,7 +48,9 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 				}
 			}
 			if !found {
-				users = append(users, map[string]interface{}{"name": "core", "sshAuthorizedKeys": p.SSHAuthorizedKeys})
+				user := map[string]interface{}{"name": "core"}
+				setUserKeys(user, "sshAuthorizedKeys", p)
+				users = append(users, user)
 			}
 			passwd["users"] = users
 		}
@@ -53,6 +58,9 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 	}
 	if err := yaml.Unmarshal(content, &cfg); err != nil {
 		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("cloud-init content must be a mapping")
 	}
 	if len(p.SSHAuthorizedKeys) > 0 || p.SSHKeysMode == "replace" {
 		users, _ := cfg["users"].([]interface{})
