@@ -40,26 +40,24 @@ groups:
 
 # Packages
 packages:
-  - epel-release
   - qemu-guest-agent
   - dnf-plugins-core
-  - util-linux-user
   - glibc-langpack-en
-  - fish
-  - htop
-  - vim-enhanced
-  - tmux
-  - jq
-  - tree
-  - unzip
-  - procps-ng
-  - file
-  - git
-  - figlet
-  - cowsay
 
 # Files
 write_files:
+  # EPEL packages must be installed after CRB and EPEL are enabled.
+  - path: /usr/local/sbin/pvectgen-setup-el
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      dnf config-manager --set-enabled crb
+      dnf install -y epel-release
+      dnf install -y util-linux-user fish htop vim-enhanced tmux jq tree unzip procps-ng file git figlet cowsay rubygems ruby-devel gcc make
+      # Decorative enhancement: keep the MOTD usable if RubyGems is unavailable.
+      gem install lolcat || echo "Optional lolcat install failed; using the plain MOTD banner" >&2
+
   - path: /etc/fish/conf.d/custom.fish
     permissions: "0644"
     content: |
@@ -148,11 +146,10 @@ write_files:
 
 # Commands
 runcmd:
+  - set -eu
+  - /usr/local/sbin/pvectgen-setup-el
   - chsh -s /usr/bin/fish root
   - localectl set-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-  - dnf config-manager --set-enabled crb || dnf config-manager --set-enabled powertools || true
-  - dnf install -y rubygems ruby-devel gcc make || true
-  - gem install lolcat 2>/dev/null || true
   - dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
   - dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - systemctl enable --now docker
