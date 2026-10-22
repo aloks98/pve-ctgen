@@ -5,6 +5,31 @@ The initial screen is Templates. At 100 columns or wider, the workspace sidebar
 stays visible. In narrower terminals, Ctrl+G opens the same navigation as a menu.
 80 × 24 is recommended; the compact layout supports at least 40 × 12.
 
+## Command+G on a Mac using Alacritty
+
+Add this binding to `~/.config/alacritty/alacritty.toml` **on your Mac**:
+
+```toml
+[[keyboard.bindings]]
+key = "G"
+mods = "Command"
+chars = "\u0007"
+```
+
+Command+G now sends the same control byte as Ctrl+G through SSH and tmux.
+Ctrl+G remains available on all keyboards. If you already bind Command+G, replace
+that binding instead of adding a second one. The TUI uses the alternate screen;
+you can add `mode = "Alt"` to limit the binding to alternate-screen applications
+(tmux itself also uses that screen).
+
+Start `pvectgen manager tui --mac-keys` on the VM to show `cmd+g` in the footer.
+This flag changes hints only; the Alacritty binding enables the shortcut.
+SSH does not reliably identify the client keyboard, so the VM does not guess
+from its own operating system. A tmux binding for Ctrl+G would intercept it;
+leave that key unbound in tmux's root key table.
+
+See the [Alacritty keyboard binding reference](https://alacritty.org/config-alacritty.html#keyboard).
+
 ## Navigation and definitions
 
 - Ctrl+G focuses the workspace menu; use j/k or arrows, then Enter. Number keys 1–9

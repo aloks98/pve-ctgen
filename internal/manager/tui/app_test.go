@@ -26,6 +26,29 @@ func testApp(t *testing.T) AppModel {
 
 func key(k string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)} }
 
+func TestMacNavigationUsesTerminalControlByte(t *testing.T) {
+	m := testApp(t)
+	m.macKeys = true
+	if !strings.Contains(m.View(), "cmd+g") {
+		t.Fatal("Mac navigation hint missing")
+	}
+	// Alacritty's Command+G binding emits BEL, the same input as Ctrl+G.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = next.(AppModel)
+	if !m.navFocused {
+		t.Fatal("mapped Command+G did not open navigation")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = next.(AppModel)
+	if m.navFocused {
+		t.Fatal("mapped Command+G did not close navigation")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyF2})
+	if next.(AppModel).navFocused {
+		t.Fatal("removed F2 binding still opens navigation")
+	}
+}
+
 func TestWorkspaceFitsAndNavigation(t *testing.T) {
 	m := testApp(t)
 	for _, size := range [][2]int{{140, 42}, {100, 30}, {80, 24}, {40, 12}, {20, 5}, {1, 1}} {

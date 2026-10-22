@@ -35,6 +35,7 @@ type AppModel struct {
 	session       *buildSession
 	navFocused    bool
 	navCursor     int
+	macKeys       bool
 	homeModel     views.HomeModel
 	cloudinitView views.CloudInitModel
 	templatesView views.TemplatesModel
@@ -375,8 +376,10 @@ func (m AppModel) helpKeys() string {
 }
 
 // Run starts the BubbleTea program.
-func Run(db *store.DB, version string) error {
-	p := tea.NewProgram(NewApp(db, version), tea.WithAltScreen())
+func Run(db *store.DB, version string, macKeys bool) error {
+	m := NewApp(db, version)
+	m.macKeys = macKeys
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

@@ -73,6 +73,13 @@ func (m AppModel) navigation(height int) string {
 	return styles.Fit(strings.Join(lines, "\n"), 20, height)
 }
 
+func (m AppModel) navigationKey() string {
+	if m.macKeys {
+		return "cmd+g"
+	}
+	return "ctrl+g"
+}
+
 func (m AppModel) workspace(content string) string {
 	if m.width < 40 || m.height < 12 {
 		return styles.Fit("pve-ctgen\nResize terminal to at least 40 x 12.\nctrl+c quit", m.width, m.height)
@@ -90,9 +97,9 @@ func (m AppModel) workspace(content string) string {
 		divider := styles.MutedStyle.Render(strings.TrimSuffix(strings.Repeat("|\n", h), "\n"))
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.navigation(h), divider, " ", body)
 	}
-	footer := "ctrl+g workspace  " + m.helpKeys()
+	footer := m.navigationKey() + " workspace  " + m.helpKeys()
 	if m.navFocused {
-		footer = "ctrl+g close  j/k move  enter open"
+		footer = m.navigationKey() + " close  j/k move  enter open"
 	}
 	return styles.Fit(title, m.width, 1) + "\n" + styles.Fit(styles.MutedStyle.Render(strings.Repeat("-", m.width)), m.width, 1) + "\n" + styles.Fit(body, m.width, h) + "\n" + styles.Fit("", m.width, 1) + "\n" + styles.Fit(footer, m.width, 1)
 }
