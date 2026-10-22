@@ -86,7 +86,9 @@ write_files:
       alias dlogs='docker logs -f'
       alias dex='docker exec -it'
       alias ports='ss -tulnp'
-      alias myip='hostname -I | awk "{print $1}"'
+      function myip
+          hostname -I | string split -n " " | head -n 1
+      end
 
       # MOTD on login
       if status is-interactive
@@ -100,7 +102,11 @@ write_files:
       # Called explicitly from fish config
       printf '\033[1;34m'
       if [ -x /usr/bin/figlet ]; then
-        /usr/bin/figlet -f standard "Welcome"
+        if command -v lolcat >/dev/null 2>&1; then
+          /usr/bin/figlet -f standard "Welcome" | lolcat
+        else
+          /usr/bin/figlet -f standard "Welcome"
+        fi
       else
         echo '      _  _   _ ____    _'
         echo '  ___| || | / |___ \  (_)_ __'
@@ -141,17 +147,12 @@ write_files:
       ClientAliveInterval 300
       ClientAliveCountMax 2
 
-  - path: /etc/ssh/sshd_config.d/no-accept-locale.conf
-    permissions: "0644"
-    content: |
-      AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
-
 # Commands
 runcmd:
   - set -eu
   - /usr/local/sbin/pvectgen-setup-el
   - chsh -s /usr/bin/fish root
-  - localectl set-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+  - localectl set-locale LANG=en_US.UTF-8
   - systemctl enable --now qemu-guest-agent || true
   - chown -R admin:admin /home/admin
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config

@@ -97,7 +97,9 @@ write_files:
       alias dlogs='docker logs -f'
       alias dex='docker exec -it'
       alias ports='ss -tulnp'
-      alias myip='hostname -I | awk "{print $1}"'
+      function myip
+          hostname -I | string split -n " " | head -n 1
+      end
 
       # MOTD on login
       if status is-interactive
@@ -152,11 +154,6 @@ write_files:
       ClientAliveInterval 300
       ClientAliveCountMax 2
 
-  - path: /etc/ssh/sshd_config.d/no-accept-locale.conf
-    permissions: "0644"
-    content: |
-      AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
-
 # Commands
 runcmd:
   - set -eu
@@ -164,7 +161,7 @@ runcmd:
   - sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
   - sed -i 's/^# *en_IN.UTF-8 UTF-8/en_IN.UTF-8 UTF-8/' /etc/locale.gen
   - locale-gen
-  - update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+  - update-locale LANG=en_US.UTF-8
   - systemctl enable --now qemu-guest-agent || true
   - chown -R admin:admin /home/admin
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
