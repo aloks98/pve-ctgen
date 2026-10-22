@@ -10,6 +10,10 @@ ssh_genkeytypes:
   - ecdsa
   - ed25519
 
+# Create/reuse the primary group explicitly (Ubuntu images may already have it).
+groups:
+  - admin
+
 # Users
 users:
   - name: root
@@ -21,6 +25,7 @@ users:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbY4fAHtL2YnQji5aqrjpTCcmC9b0s0BtJebPjAEVIJ aloks98@fatman
       # END MANAGED SSH KEYS
   - name: admin
+    primary_group: admin
     lock_passwd: true
     gecos: Administrator
     groups: sudo
