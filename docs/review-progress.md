@@ -19,6 +19,18 @@ The manager owns editable definitions and a local build-history projection. The 
 | 13 | Node/template profiles for storage, snippets, bridge, disk format/size and guest settings | Live build with dedicated snippet storage and 8 GiB disk |
 | 14 | `manager doctor`, automatic build/launch preflight, fleet dry-run checks | Live valid profile and missing-storage rejection |
 
-The full TUI redesign remains the next phase (items 15–18). This phase shares its build execution and persistence with the CLI.
+The approved TUI direction uses Workspace navigation and a guided build flow.
+Implementation steps, committed separately:
+
+| Step | Change | Verification |
+| --- | --- | --- |
+| 15 | Responsive workspace shell, persistent sidebar and compact F2 navigation | Terminal-size, form-focus and background-build tests |
+| 16 | Filterable template browser, selected details, profile editing, delete confirmation, adaptive tables/forms | Unicode/paging, filtered actions and focused-field visibility tests |
+| 17 | Guided build review with validated snapshots and live preflight gate | Failed/stale checks, invalid IDs, immutable requests and duplicate-submit tests |
+| 18 | Persistent progress logs, paused follow, explicit reconnect and remote cancellation | Race tests for replay and queue cancellation; live terminal checks |
+
+The implementation uses the existing CLI build coordinator and minion jobs. See
+[TUI controls and limitations](tui.md). Artboard sources remain uncommitted in the
+separate prototype worktree.
 
 See [migration](migration.md) before upgrading an existing installation and [testing](testing.md) for the test record and limits.

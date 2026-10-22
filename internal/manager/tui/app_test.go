@@ -6,6 +6,7 @@ import (
 
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/views"
+	"github.com/aloks98/pve-ctgen/internal/shared/models"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -67,7 +68,7 @@ func TestWorkspaceFitsAndNavigation(t *testing.T) {
 
 func TestBackgroundBuildSurvivesNavigation(t *testing.T) {
 	m := testApp(t)
-	m.buildProgress.Reset(make(chan *pb.BuildEvent))
+	m.buildProgress.Reset(make(chan tea.Msg))
 	next, _ := m.Update(NavigateMsg{View: ViewBuildSelect})
 	m = next.(AppModel)
 	if m.currentView != ViewBuildProgress {
@@ -78,9 +79,21 @@ func TestBackgroundBuildSurvivesNavigation(t *testing.T) {
 	if m.currentView != ViewTemplates || !m.buildProgress.Running() {
 		t.Fatal("lost background build")
 	}
-	next, cmd := m.Update(views.BuildEventMsg{Event: &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_LOG, Message: "still running"}})
+	next, cmd := m.Update(views.BuildStreamMsg{Message: views.BuildEventMsg{Event: &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_LOG, Message: "still running"}}})
 	m = next.(AppModel)
 	if cmd == nil || m.currentView != ViewTemplates {
 		t.Fatal("background listener stopped or stole navigation")
+	}
+}
+
+func TestStaleCancelCannotStopNewQueue(t *testing.T) {
+	m := testApp(t)
+	m.session = newBuildSession(models.Node{Name: "tokyo"})
+	defer m.session.close()
+	m.buildProgress.Reset(m.session.events)
+	m.buildProgress, _ = m.buildProgress.Update(views.BuildStartedMsg{Request: &pb.BuildRequest{BuildId: "new-job", Image: &pb.Image{Name: "debian", Id: 9400}}})
+	_, cmd := m.Update(views.CancelBuildMsg{ID: "old-job"})
+	if cmd != nil || m.session.stopQueue.Load() {
+		t.Fatal("stale cancellation affected new queue")
 	}
 }

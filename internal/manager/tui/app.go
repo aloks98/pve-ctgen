@@ -1,19 +1,12 @@
 package tui
 
 import (
-	"context"
-	"fmt"
-
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/aloks98/pve-ctgen/internal/manager/buildrun"
-	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
-	"github.com/aloks98/pve-ctgen/internal/manager/tui/components"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/views"
-	"github.com/aloks98/pve-ctgen/internal/shared/models"
-	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 )
 
 // View represents which screen is active.
@@ -39,6 +32,7 @@ type NavigateMsg struct {
 // AppModel is the root BubbleTea model.
 type AppModel struct {
 	currentView   View
+	session       *buildSession
 	navFocused    bool
 	navCursor     int
 	homeModel     views.HomeModel
@@ -50,7 +44,6 @@ type AppModel struct {
 	buildProgress views.BuildProgressModel
 	vmLaunch      views.VMLaunchModel
 	nodesView     views.NodesModel
-	statusBar     components.StatusBar
 	store         *store.DB
 	width, height int
 	err           error
@@ -102,7 +95,7 @@ func (m *AppModel) inSubView() bool {
 	case ViewBuildSelect:
 		return m.buildSelect.InSubView()
 	case ViewBuildProgress:
-		return false // esc sends build to background, never blocks
+		return m.buildProgress.InSubView()
 	}
 	return false
 }
@@ -113,13 +106,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.statusBar.Width = msg.Width
 		m.resizeViews()
 		return m, nil
 
 	case tea.KeyMsg:
 		// ctrl+c always quits
 		if msg.String() == "ctrl+c" {
+			if m.session != nil {
+				m.session.close()
+			}
 			return m, tea.Quit
 		}
 
@@ -163,6 +158,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q":
 			if m.currentView == ViewTemplates {
+				if m.session != nil {
+					m.session.close()
+				}
 				return m, tea.Quit
 			}
 			if m.currentView == ViewBuildProgress && m.buildProgress.Running() {
@@ -184,7 +182,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	// Build events are always handled, even when backgrounded on another view
-	case views.BuildEventMsg, views.BuildDoneMsg:
+	case views.BuildStreamMsg, views.BuildEventMsg, views.BuildDoneMsg, views.BuildCancelResultMsg:
 		var cmd tea.Cmd
 		m.buildProgress, cmd = m.buildProgress.Update(msg)
 		// If we're on the build progress view, return the cmd to keep listening
@@ -193,6 +191,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Backgrounded — still process events but don't show them
 		return m, cmd
+
+	case spinner.TickMsg:
+		if m.buildProgress.Running() {
+			var cmd tea.Cmd
+			m.buildProgress, cmd = m.buildProgress.Update(msg)
+			if m.currentView == ViewVMLaunch {
+				var vmCmd tea.Cmd
+				m.vmLaunch, vmCmd = m.vmLaunch.Update(msg)
+				return m, tea.Batch(cmd, vmCmd)
+			}
+			return m, cmd
+		}
+	case views.ReconnectBuildMsg:
+		if m.session != nil && msg.ID != "" && msg.ID == m.buildProgress.ActiveBuildID() {
+			m.session.reconnect()
+		}
+		return m, nil
+	case views.CancelBuildMsg:
+		if m.session != nil && msg.ID != "" && msg.ID == m.buildProgress.ActiveBuildID() {
+			return m, m.session.cancelBuild(msg.ID)
+		}
+		return m, nil
 
 	case views.BuildTemplateMsg:
 		if m.buildProgress.Running() {
@@ -207,11 +227,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.buildProgress.Running() {
 			return m, nil
 		}
-		// Template + node selected — launch the build
-		events := make(chan *pb.BuildEvent, 100)
-		m.buildProgress.Reset(events)
+		if len(msg.Requests) == 0 {
+			return m, nil
+		}
+		m.session = newBuildSession(msg.Node)
+		m.buildProgress.Reset(m.session.events)
 		m.currentView = ViewBuildProgress
-		go runBuildInBackground(m.store, msg.Templates, msg.Node, msg.Requests, events)
+		go m.session.run(m.store, msg.Requests)
 		return m, m.buildProgress.Init()
 
 	case NavigateMsg:
@@ -333,6 +355,10 @@ func (m AppModel) helpKeys() string {
 		return ""
 	}
 	switch m.currentView {
+	case ViewTemplates:
+		return styles.HelpBar(styles.HelpEntry("b", "build"), styles.HelpEntry("/", "filter"), styles.HelpEntry("q", "quit"))
+	case ViewBuildProgress:
+		return styles.HelpBar(styles.HelpEntry("j/k", "logs"), styles.HelpEntry("f", "follow"), styles.HelpEntry("esc", "templates"))
 	case ViewHome:
 		return styles.HelpBar(
 			styles.HelpEntry("j/k", "move"),
@@ -345,42 +371,6 @@ func (m AppModel) helpKeys() string {
 			styles.HelpEntry("esc", "back"),
 			styles.HelpEntry("q", "templates"),
 		)
-	}
-}
-
-func (m AppModel) rightStatus() string {
-	if m.buildProgress.Running() {
-		return styles.WarningStyle.Render("[building]")
-	}
-	return styles.DimStyle.Render(fmt.Sprintf("%d nodes", len(m.nodesView.NodeCount())))
-}
-
-// runBuildInBackground connects to the minion, runs builds, and sends events on the channel.
-// The channel is closed when all builds complete.
-func runBuildInBackground(db *store.DB, templates []models.Template, node models.Node, requests []*pb.BuildRequest, events chan<- *pb.BuildEvent) {
-	defer close(events)
-
-	client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
-	if err != nil {
-		events <- &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()}
-		return
-	}
-	defer client.Close()
-	for i, tmpl := range templates {
-		reportedFailure := false
-		emit := func(e *pb.BuildEvent) {
-			events <- e
-			reportedFailure = e.Type == pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED
-		}
-		var err error
-		if i < len(requests) {
-			err = buildrun.Start(context.Background(), db, client, requests[i], node.Name, emit)
-		} else {
-			err = buildrun.Run(context.Background(), db, client, tmpl, node.Name, nil, emit)
-		}
-		if err != nil && !reportedFailure {
-			events <- &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()}
-		}
 	}
 }
 

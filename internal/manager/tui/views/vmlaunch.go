@@ -643,6 +643,11 @@ func (m VMLaunchModel) View() string {
 			b.WriteString(styles.MutedStyle.Render("  No nodes configured."))
 		}
 		for i, n := range m.nodes {
+			visible := max(1, m.height-10)
+			start := max(0, m.nodeCursor-visible+1)
+			if i < start || i >= start+visible {
+				continue
+			}
 			cursor := "  "
 			if i == m.nodeCursor {
 				cursor = styles.SelectedStyle.Render("> ")
@@ -665,6 +670,11 @@ func (m VMLaunchModel) View() string {
 	case vmPhaseTmplSelect:
 		fmt.Fprintf(&b, "  Node: %s — Select a template:\n\n", styles.SelectedStyle.Render(m.selectedNode.Label()))
 		for i, t := range m.remoteTemplates {
+			visible := max(1, m.height-10)
+			start := max(0, m.tmplCursor-visible+1)
+			if i < start || i >= start+visible {
+				continue
+			}
 			cursor := "  "
 			if i == m.tmplCursor {
 				cursor = styles.SelectedStyle.Render("> ")
@@ -688,7 +698,13 @@ func (m VMLaunchModel) View() string {
 
 		visible := m.visibleFields()
 		for vi, fid := range visible {
+			count := max(1, (m.height-10)/2)
+			start := max(0, m.cursor-count+1)
+			if vi < start || vi >= start+count {
+				continue
+			}
 			f := m.fields[fid]
+			f.input.Width = max(5, m.width-6)
 			cursor := "  "
 			if vi == m.cursor {
 				cursor = styles.SelectedStyle.Render("> ")
@@ -715,7 +731,7 @@ func (m VMLaunchModel) View() string {
 				value = f.input.View()
 			}
 
-			fmt.Fprintf(&b, "  %s%-18s %s\n", cursor, label+":", value)
+			fmt.Fprintf(&b, "%s%s\n  %s\n", cursor, label+":", value)
 		}
 
 		b.WriteString("\n")

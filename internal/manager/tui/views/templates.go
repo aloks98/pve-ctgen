@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/components"
@@ -29,19 +31,20 @@ type BuildTemplateMsg struct{ Name string }
 
 // TemplatesModel manages the template store view.
 type TemplatesModel struct {
-	table     components.Table
-	db        *store.DB
-	names     []string
-	mode      tmplMode
-	form      components.Form
-	editName  string
-	detail    string
-	statusMsg string
-	width     int
-	height    int
-	templates []models.Template
-	search    textinput.Model
-	searching bool
+	table      components.Table
+	db         *store.DB
+	names      []string
+	mode       tmplMode
+	form       components.Form
+	editName   string
+	detail     string
+	statusMsg  string
+	width      int
+	height     int
+	templates  []models.Template
+	search     textinput.Model
+	searching  bool
+	detailView viewport.Model
 }
 
 // NewTemplatesModel creates a new TemplatesModel.
@@ -64,6 +67,9 @@ func (m *TemplatesModel) SetSize(w, h int) {
 	m.height = h
 	m.search.Width = max(10, w-8)
 	m.table.Height = max(4, h-12)
+	m.detailView.Width = max(1, w)
+	m.detailView.Height = max(1, h-5)
+	m.detailView.SetContent(ansi.Hardwrap(m.detail, max(1, w), true))
 }
 
 // Refresh reloads data from the store.
@@ -160,7 +166,9 @@ func (m TemplatesModel) Update(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 				m.mode = tmplModeList
 			}
 		}
-		return m, nil
+		var cmd tea.Cmd
+		m.detailView, cmd = m.detailView.Update(msg)
+		return m, cmd
 	}
 
 	// List mode
@@ -220,6 +228,8 @@ func (m TemplatesModel) Update(msg tea.Msg) (TemplatesModel, tea.Cmd) {
 					fmt.Fprintf(&detail, "  Init Type:     %s\n", t.EffectiveInitType())
 					fmt.Fprintf(&detail, "  Profile:       %s\n", t.Profile)
 					m.detail = detail.String()
+					m.detailView.SetContent(ansi.Hardwrap(m.detail, max(1, m.width), true))
+					m.detailView.GotoTop()
 					m.mode = tmplModeShow
 				}
 			}
@@ -339,7 +349,7 @@ func (m TemplatesModel) View() string {
 		b.WriteString("\n")
 		b.WriteString(styles.TitleStyle.Render(" Template Detail "))
 		b.WriteString("\n\n")
-		b.WriteString(m.detail)
+		b.WriteString(m.detailView.View())
 		b.WriteString("\n")
 		b.WriteString(styles.MutedStyle.Render("  esc: back"))
 		return b.String()

@@ -49,4 +49,29 @@ PVECTGEN_LIVE_CONFIG=/var/lib/pvectgen-review-test/minion.yaml \
 
 `TestLiveJobs` requires a `broken` profile referencing nonexistent storage and fixture URLs `/disk.qcow2` and `/SHA256SUMS` on loopback port 50062. It executes a cancellable shell job against an unused ID and checks the child process. `TestLiveGuards` is a separate opt-in test using `PVECTGEN_LIVE_TEST_NODE`; it requires all three reserved IDs free, creates named diskless fixtures, and deletes only those fixtures.
 
-Only Debian guest boot was exercised end to end. Other bundled cloud-init files and Flatcar Butane were imported/resolved locally; their full guest provisioning, Kubernetes extension downloads, alternate storage backends and multi-node fleet creation were not live-tested. This phase does not include the full TUI redesign.
+Only Debian guest boot was exercised end to end. Other bundled cloud-init files and Flatcar Butane were imported/resolved locally; their full guest provisioning, Kubernetes extension downloads, alternate storage backends and multi-node fleet creation were not live-tested.
+
+## TUI overhaul verification, 2026-10-23
+
+The full race suite and `go vet ./...` passed. Added tests exercise workspace sizing
+and navigation, focus retention, Unicode tables and paging, form scrolling,
+filtered template actions and delete confirmation, build-review validation,
+failed/stale preflight results, reviewed-request immutability, duplicate submission,
+event replay, log retention/follow, reconnect cursors and cancellation of queued
+work. A real local PTY was also used to inspect the rendered workspace.
+
+On `tokyo` (`192.168.100.1`), a temporary binary and scratch manager store ran in a
+PTY against an isolated minion on `127.0.0.1:50071`. The smoke test verified:
+
+- Pinned-TLS enrollment and live node health from the Nodes screen.
+- Template filtering, selected-template build flow and VM-ID review.
+- An intentionally missing profile produced a failed preflight check; Enter did
+  not submit a build. No job journals or build-history records were created.
+- Resizing between 120 × 36, 80 × 24 and 40 × 12; keyboard navigation to the last
+  template-edit field; clean Ctrl+C exit.
+
+The test minion and scratch data were removed. No VMs or storage configuration
+were changed. Reconnect and cancellation in this UI phase were tested through
+the session coordinator with controlled streams; actual minion cancellation and
+replay were covered by the earlier live tests above. A full guest build/launch was
+not repeated for the UI overhaul.

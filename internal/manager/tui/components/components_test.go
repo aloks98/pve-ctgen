@@ -57,3 +57,26 @@ func TestFormKeepsFocusedFieldVisible(t *testing.T) {
 		t.Fatal("form too tall")
 	}
 }
+
+func TestLogsPauseFollowAndBoundBuffer(t *testing.T) {
+	l := NewLogViewer("Output")
+	l.SetSize(40, 5)
+	for i := 0; i < 20; i++ {
+		l.AppendLine(fmt.Sprintf("line %d", i))
+	}
+	l.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	before := l.viewport.YOffset
+	l.AppendLine("new message")
+	if l.follow || l.viewport.YOffset != before {
+		t.Fatal("new log stole scroll position")
+	}
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if !strings.Contains(l.View(), "new message") {
+		t.Fatal("follow did not resume")
+	}
+	l.lines = make([]string, 5000)
+	l.AppendLine("last message")
+	if len(l.lines) != 5000 {
+		t.Fatal("live log buffer unbounded")
+	}
+}

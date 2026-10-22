@@ -5,275 +5,277 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/components"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-// BuildEventMsg wraps a gRPC build event for the TUI.
-type BuildEventMsg struct {
-	Event *pb.BuildEvent
-}
-
-// BuildDoneMsg signals that the event channel has been closed (all builds finished).
+type BuildEventMsg struct{ Event *pb.BuildEvent }
 type BuildDoneMsg struct{}
-
-type stepStatus struct {
-	name   string
-	status string
+type BuildStreamMsg struct{ Message tea.Msg }
+type BuildStartedMsg struct {
+	Request *pb.BuildRequest
+	Node    string
 }
-
-type imageStatus struct {
-	name      string
-	status    string
-	steps     []stepStatus
-	collapsed bool
+type BuildConnectionMsg struct{ Err error }
+type BuildConnectedMsg struct{}
+type CancelBuildMsg struct{ ID string }
+type ReconnectBuildMsg struct{ ID string }
+type BuildCancelResultMsg struct {
+	ID  string
+	Err error
 }
+type stepStatus struct{ name, status string }
 
-// BuildProgressModel shows live build progress.
 type BuildProgressModel struct {
-	images       []imageStatus
-	logViewer    components.LogViewer
-	events       <-chan *pb.BuildEvent
-	spinner      spinner.Model
-	currentStep  string
-	currentCmd   string
-	Done         bool
-	Backgrounded bool
-	succeeded    int
-	failed       int
-	width        int
-	height       int
+	logViewer                        components.LogViewer
+	events                           <-chan tea.Msg
+	spinner                          spinner.Model
+	steps                            []stepStatus
+	id, name, node                   string
+	vmID                             int32
+	started                          time.Time
+	elapsed                          time.Duration
+	lastSequence                     int64
+	currentStep, currentCmd          string
+	Done, Backgrounded, Disconnected bool
+	confirmCancel, cancelling        bool
+	statusMsg                        string
+	succeeded, failed, total         int
+	width, height                    int
 }
 
-// NewBuildProgressModel creates a new BuildProgressModel.
 func NewBuildProgressModel() BuildProgressModel {
 	s := spinner.New()
-	s.Spinner = spinner.Spinner{
-		Frames: []string{"-", "\\", "|", "/"},
-		FPS:    time.Second / 10,
-	}
-	return BuildProgressModel{
-		logViewer: components.NewLogViewer("Build Output"),
-		spinner:   s,
-	}
+	s.Spinner = spinner.Spinner{Frames: []string{"-", "\\", "|", "/"}, FPS: time.Second / 10}
+	return BuildProgressModel{logViewer: components.NewLogViewer("Build output"), spinner: s}
 }
-
-// SetSize sets the view dimensions.
 func (m *BuildProgressModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-	m.logViewer.SetSize(w/2, h-6)
+	logWidth := w
+	if w >= 75 {
+		logWidth = w - 28
+	}
+	m.logViewer.SetSize(max(1, logWidth), max(1, h-9))
 }
-
-// Reset clears state for a new build and sets the event channel.
-func (m *BuildProgressModel) Reset(events <-chan *pb.BuildEvent) {
-	m.images = nil
+func (m *BuildProgressModel) Reset(events <-chan tea.Msg) {
+	width, height := m.width, m.height
+	*m = NewBuildProgressModel()
 	m.events = events
-	m.currentStep = ""
-	m.currentCmd = ""
-	m.Done = false
-	m.Backgrounded = false
-	m.succeeded = 0
-	m.failed = 0
-	m.logViewer.Clear()
+	m.SetSize(width, height)
 }
-
-// Running returns true if a build is in progress (not done, has events channel).
-func (m *BuildProgressModel) Running() bool {
-	return m.events != nil && !m.Done
+func (m *BuildProgressModel) Running() bool { return m.events != nil && !m.Done }
+func (m *BuildProgressModel) ActiveBuildID() string {
+	if m.Running() {
+		return m.id
+	}
+	return ""
 }
-
-// Init returns a command to start listening for events and the spinner.
+func (m *BuildProgressModel) InSubView() bool { return m.confirmCancel }
 func (m *BuildProgressModel) Init() tea.Cmd {
 	if m.events == nil {
 		return nil
 	}
 	return tea.Batch(listenForEvent(m.events), m.spinner.Tick)
 }
-
-func listenForEvent(events <-chan *pb.BuildEvent) tea.Cmd {
+func listenForEvent(events <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		event, ok := <-events
+		msg, ok := <-events
 		if !ok {
 			return BuildDoneMsg{}
 		}
-		return BuildEventMsg{Event: event}
+		return BuildStreamMsg{Message: msg}
 	}
 }
-
-// Update handles events.
 func (m BuildProgressModel) Update(msg tea.Msg) (BuildProgressModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case BuildStreamMsg:
+		m, _ = m.Update(msg.Message)
+		return m, listenForEvent(m.events)
+	case BuildStartedMsg:
+		req := msg.Request
+		m.id = req.BuildId
+		m.name = req.Image.Name
+		m.vmID = req.Image.Id
+		m.node = msg.Node
+		m.started = time.Now()
+		m.total++
+		m.currentStep = "Starting"
+		m.currentCmd = ""
+		m.lastSequence = 0
+		m.Disconnected = false
+		m.cancelling = false
+		m.confirmCancel = false
+		m.statusMsg = ""
+		m.steps = []stepStatus{{"Download & Verify", "pending"}, {"Copy Image", "pending"}}
+		for _, s := range req.Steps {
+			m.steps = append(m.steps, stepStatus{s.Name, "pending"})
+		}
+		m.logViewer.AppendLine(fmt.Sprintf("--- %s / VMID %d / %s ---", m.name, m.vmID, m.id))
+	case BuildConnectedMsg:
+		m.Disconnected = false
+		m.statusMsg = ""
+	case BuildConnectionMsg:
+		m.Disconnected = true
+		m.statusMsg = msg.Err.Error()
+		m.logViewer.AppendLine("Connection interrupted: " + msg.Err.Error())
+	case BuildCancelResultMsg:
+		if msg.ID != m.id || m.Done {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m.cancelling = false
+			m.statusMsg = "Cancel failed: " + msg.Err.Error()
+		} else {
+			m.statusMsg = "Cancellation requested; waiting for minion confirmation."
+		}
 	case BuildEventMsg:
 		e := msg.Event
+		if e == nil {
+			return m, nil
+		}
+		if m.id != "" && e.BuildId != "" && e.BuildId != m.id {
+			return m, nil
+		}
+		if e.Sequence > 0 && e.Sequence <= m.lastSequence {
+			return m, nil
+		}
+		if e.Sequence > 0 {
+			m.lastSequence = e.Sequence
+		}
 		switch e.Type {
 		case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_STARTED:
 			m.currentStep = e.StepName
 			m.currentCmd = ""
-			if len(m.images) == 0 || m.images[len(m.images)-1].status == "completed" || m.images[len(m.images)-1].status == "failed" {
-				name := e.StepName
-				if e.BuildId != "" && len(e.BuildId) >= 8 {
-					name = fmt.Sprintf("Build %s", e.BuildId[:8])
-				}
-				m.images = append(m.images, imageStatus{name: name, status: "running"})
-				// Clear log for the new build
-				m.logViewer.Clear()
-				m.logViewer.AppendLine(fmt.Sprintf("--- %s ---", name))
-			}
-			img := &m.images[len(m.images)-1]
-			img.steps = append(img.steps, stepStatus{name: e.StepName, status: "running"})
-
+			m.updateStep(e.StepName, "running")
 		case pb.BuildEventType_BUILD_EVENT_TYPE_LOG:
 			m.logViewer.AppendLine(e.Message)
-
 		case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_COMPLETED:
-			m.updateStepStatus(e.StepName, "completed")
-
+			m.updateStep(e.StepName, "completed")
 		case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_FAILED:
-			m.updateStepStatus(e.StepName, "failed")
-			m.logViewer.AppendLine(fmt.Sprintf("FAILED: %s", e.Message))
-
+			m.updateStep(e.StepName, "failed")
+			m.logViewer.AppendLine("FAILED: " + e.Message)
 		case pb.BuildEventType_BUILD_EVENT_TYPE_DOWNLOAD_PROGRESS:
-			m.currentCmd = fmt.Sprintf("Downloading: %.0f%%", e.Progress*100)
-
+			m.currentCmd = fmt.Sprintf("Downloading %.0f%%", e.Progress*100)
 		case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_COMPLETED:
-			if len(m.images) > 0 {
-				last := &m.images[len(m.images)-1]
-				last.status = "completed"
-				last.collapsed = true
-			}
 			m.succeeded++
-			m.currentStep = ""
+			m.currentStep = "Completed"
 			m.currentCmd = ""
-
+			m.logViewer.AppendLine("BUILD COMPLETED")
 		case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED:
-			if len(m.images) > 0 {
-				last := &m.images[len(m.images)-1]
-				last.status = "failed"
-				last.collapsed = true
-			}
 			m.failed++
-			m.logViewer.AppendLine(fmt.Sprintf("BUILD FAILED: %s", e.Message))
-			m.currentStep = ""
+			m.currentStep = "Failed"
 			m.currentCmd = ""
+			m.logViewer.AppendLine("BUILD FAILED: " + e.Message)
 		}
-
-		// Always keep listening — channel close triggers BuildDoneMsg
-		if m.events != nil {
-			return m, listenForEvent(m.events)
-		}
-		return m, nil
-
 	case BuildDoneMsg:
 		m.Done = true
 		m.Backgrounded = false
-		m.logViewer.Clear()
-		return m, nil
-
+		m.Disconnected = false
+		m.confirmCancel = false
+		m.cancelling = false
+		m.statusMsg = ""
+		if !m.started.IsZero() {
+			m.elapsed = time.Since(m.started)
+		}
 	case spinner.TickMsg:
-		if !m.Done {
+		if m.Running() {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
 		}
-
 	case tea.KeyMsg:
+		k := msg.String()
+		if m.confirmCancel {
+			switch k {
+			case "y":
+				m.confirmCancel = false
+				m.cancelling = true
+				id := m.id
+				return m, func() tea.Msg { return CancelBuildMsg{ID: id} }
+			case "n", "esc":
+				m.confirmCancel = false
+			}
+			return m, nil
+		}
+		if k == "x" && m.Running() && m.id != "" && !m.cancelling {
+			m.confirmCancel = true
+			return m, nil
+		}
+		if k == "r" && m.Disconnected {
+			m.statusMsg = "Reconnecting..."
+			id := m.id
+			return m, func() tea.Msg { return ReconnectBuildMsg{ID: id} }
+		}
 		m.logViewer.Update(msg)
 	}
 	return m, nil
 }
-
-func (m *BuildProgressModel) updateStepStatus(name, status string) {
-	if len(m.images) == 0 {
-		return
-	}
-	img := &m.images[len(m.images)-1]
-	for i := range img.steps {
-		if img.steps[i].name == name {
-			img.steps[i].status = status
-			break
+func (m *BuildProgressModel) updateStep(name, status string) {
+	for i := range m.steps {
+		if m.steps[i].name == name {
+			m.steps[i].status = status
+			return
 		}
 	}
+	m.steps = append(m.steps, stepStatus{name, status})
 }
-
-// View renders the build progress.
 func (m BuildProgressModel) View() string {
-	if m.width == 0 {
-		return "Loading..."
+	if m.events == nil {
+		return "Build progress\n\nNo build in this session. Choose a template and press b.\nPrevious results are available in History."
 	}
-
-	leftWidth := m.width / 3
-	rightWidth := m.width - leftWidth - 3
-
-	// Left panel: step tree
-	var left strings.Builder
-	left.WriteString(styles.TitleStyle.Render(" Steps"))
-	left.WriteString("\n")
-	if len(m.images) == 0 {
-		left.WriteString("\n")
-		fmt.Fprintf(&left, "  %s Waiting for build to start...", m.spinner.View())
-	}
-	for _, img := range m.images {
-		fmt.Fprintf(&left, "\n  %s %s", styles.StatusTag(img.status), img.name)
-		if img.collapsed {
-			left.WriteString("\n")
-			continue
-		}
-		left.WriteString("\n")
-		for _, step := range img.steps {
-			fmt.Fprintf(&left, "    %s %s\n", styles.StatusTag(step.status), step.name)
-		}
-	}
-
-	// Progress counter
-	total := len(m.images)
-	done := m.succeeded + m.failed
-	if total > 0 && !m.Done {
-		fmt.Fprintf(&left, "\n  %s\n", styles.MutedStyle.Render(fmt.Sprintf("  %d/%d complete", done, total)))
-	}
-
-	leftPanel := lipgloss.NewStyle().Width(leftWidth).Render(left.String())
-
-	// Right panel: current step + log
-	var right strings.Builder
-	right.WriteString(styles.TitleStyle.Render(" Current Step"))
-	right.WriteString("\n")
-	if m.currentStep != "" {
-		fmt.Fprintf(&right, "  %s\n", m.currentStep)
-	} else if m.Done {
-		right.WriteString(styles.MutedStyle.Render("  All builds finished\n"))
-	} else {
-		right.WriteString(styles.MutedStyle.Render("  —\n"))
-	}
-	if m.currentCmd != "" {
-		fmt.Fprintf(&right, "  %s\n", styles.WarningStyle.Render(m.currentCmd))
-	}
-	right.WriteString("\n")
-
-	logView := m.logViewer.View()
-
-	rightPanel := lipgloss.NewStyle().Width(rightWidth).Render(
-		lipgloss.JoinVertical(lipgloss.Left, right.String(), logView),
-	)
-
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
-
+	state := "RUNNING " + m.spinner.View()
 	if m.Done {
-		summary := fmt.Sprintf("  %d succeeded, %d failed.", m.succeeded, m.failed)
-		if m.failed == 0 {
-			summary = styles.SuccessStyle.Render(summary)
-		} else {
-			summary = styles.ErrorStyle.Render(summary)
-		}
-		content += "\n\n" + summary + "  " + styles.MutedStyle.Render("Press esc to go back.")
-	} else {
-		content += "\n\n" + styles.MutedStyle.Render("  esc: send to background")
+		state = "FINISHED"
 	}
-
-	return content
+	if m.Disconnected {
+		state = "DISCONNECTED"
+	}
+	if m.cancelling {
+		state = "CANCELLING"
+	}
+	elapsed := m.elapsed
+	if !m.Done && !m.started.IsZero() {
+		elapsed = time.Since(m.started)
+	}
+	heading := styles.BoldStyle.Render(m.name) + "  " + styles.WarningStyle.Render(state) + "\n" + styles.DimStyle.Render(fmt.Sprintf("%s / VMID %d / %s / %s", m.node, m.vmID, m.id, elapsed.Round(time.Second))) + "\n\n"
+	current := m.currentStep
+	if m.currentCmd != "" {
+		current += " / " + m.currentCmd
+	}
+	heading += styles.AccentStyle.Render(current) + "\n"
+	body := m.logViewer.View()
+	if m.width >= 75 {
+		var lines []string
+		for _, step := range m.steps {
+			lines = append(lines, styles.StatusTag(step.status)+" "+step.name)
+		}
+		// Keep the active step visible when custom pipelines exceed the terminal height.
+		active := 0
+		for i, s := range m.steps {
+			if s.status == "running" {
+				active = i
+			}
+		}
+		visible := max(1, m.height-9)
+		start := max(0, active-visible+1)
+		left := styles.Fit(strings.Join(lines[start:], "\n"), 26, visible+1)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", body)
+	}
+	footer := fmt.Sprintf("%d succeeded / %d failed / %d started", m.succeeded, m.failed, m.total)
+	if m.confirmCancel {
+		footer = "Cancel build and skip queued builds?\ny confirm / n or esc keep running"
+	} else if m.Disconnected {
+		footer += " | r reconnect | x cancel"
+	} else if !m.Done {
+		footer += " | x cancel | esc background"
+	}
+	if m.statusMsg != "" {
+		footer += "\n" + m.statusMsg
+	}
+	return heading + body + "\n" + styles.DimStyle.Render(footer)
 }
