@@ -66,11 +66,10 @@
   {
     "id": 9200,
     "name": "flatcar-k8s",
-    "url": "https://isoman.e412.in/images/flatcar-linux/4593.2.1/x86_64/flatcar-linux-4593.2.1-proxmox-x86_64.img",
-    "checksum_url": "",
+    "url": "https://stable.release.flatcar-linux.net/amd64-usr/4593.2.1/flatcar_production_proxmoxve_image.img",
+    "checksum_url": "https://stable.release.flatcar-linux.net/amd64-usr/4593.2.1/flatcar_production_proxmoxve_image.img.DIGESTS",
     "tags": "flatcar-template,k8s,ignition",
     "vendor": "flatcar-k8s.bu",
     "init_type": "ignition"
   }
 ]
-    

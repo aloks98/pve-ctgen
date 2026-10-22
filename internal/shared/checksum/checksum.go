@@ -1,6 +1,7 @@
 package checksum
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -11,7 +12,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // GetExpectedChecksum fetches the expected checksum for a given image from its checksum URL.
@@ -21,76 +24,96 @@ import (
 //   - Rocky/Alma: "filename (ALGORITHM) = checksum"
 //   - Single value: just the checksum string
 func GetExpectedChecksum(url string, filename string) (string, string, error) {
-	resp, err := http.Get(url)
+	return GetExpectedChecksumContext(context.Background(), url, filename)
+}
+
+func GetExpectedChecksumContext(ctx context.Context, url, filename string) (string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return "", "", err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("checksum HTTP status: %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if len(body) > 1<<20 {
+		return "", "", fmt.Errorf("checksum file exceeds 1 MiB")
+	}
 	if err != nil {
 		return "", "", err
 	}
 
-	var checksum string
-	bodyString := string(body)
-	lines := strings.Split(bodyString, "\n")
+	return parseManifest(string(body), filename)
+}
 
-	// Standard format: "checksum  filename" or "checksum *filename"
-	for _, line := range lines {
+func parseManifest(body, filename string) (string, string, error) {
+	hashes := map[string]string{}
+	add := func(value string) error {
+		algo, err := DetectAlgorithm(value)
+		if err != nil {
+			return nil
+		}
+		if algo != "sha256" && algo != "sha512" {
+			return nil
+		}
+		if _, err = hex.DecodeString(value); err != nil {
+			return fmt.Errorf("checksum is not hexadecimal")
+		}
+		value = strings.ToLower(value)
+		if previous := hashes[algo]; previous != "" && previous != value {
+			return fmt.Errorf("conflicting %s checksums for %s", algo, filename)
+		}
+		hashes[algo] = value
+		return nil
+	}
+	bsd := regexp.MustCompile(`^(SHA256|SHA512) \((.+)\) = ([A-Fa-f0-9]+)$`)
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
 		fields := strings.Fields(line)
-		if len(fields) >= 2 {
-			checksumFilename := strings.TrimPrefix(fields[1], "*")
-			if checksumFilename == filename {
-				checksum = fields[0]
-				break
+		if len(fields) == 2 && !strings.HasPrefix(line, "#") && strings.TrimPrefix(fields[1], "*") == filename {
+			if err := add(fields[0]); err != nil {
+				return "", "", err
 			}
 		}
-	}
-
-	// Fedora format: "## filename" followed by "SHA256: checksum"
-	if checksum == "" {
-		for i, line := range lines {
-			if strings.HasPrefix(line, "## ") && strings.TrimPrefix(line, "## ") == filename {
-				if i+1 < len(lines) {
-					nextLine := lines[i+1]
-					if strings.HasPrefix(nextLine, "SHA256: ") {
-						checksum = strings.TrimSpace(strings.TrimPrefix(nextLine, "SHA256: "))
-						break
-					}
+		if match := bsd.FindStringSubmatch(line); len(match) > 0 && match[2] == filename {
+			want := 64
+			if match[1] == "SHA512" {
+				want = 128
+			}
+			if len(match[3]) != want {
+				return "", "", fmt.Errorf("checksum algorithm/length mismatch")
+			}
+			if err := add(match[3]); err != nil {
+				return "", "", err
+			}
+		}
+		if line == "## "+filename && i+1 < len(lines) {
+			next := strings.TrimSpace(lines[i+1])
+			if strings.HasPrefix(next, "SHA256: ") {
+				if err := add(strings.TrimPrefix(next, "SHA256: ")); err != nil {
+					return "", "", err
 				}
 			}
 		}
 	}
-
-	// Rocky/Alma format: "filename (ALGORITHM) = checksum"
-	if checksum == "" {
-		for _, line := range lines {
-			if strings.Contains(line, "("+filename+")") {
-				parts := strings.Split(line, "= ")
-				if len(parts) == 2 {
-					checksum = strings.TrimSpace(parts[1])
-					break
-				}
-			}
+	if fields := strings.Fields(body); len(fields) == 1 {
+		if err := add(fields[0]); err != nil {
+			return "", "", err
 		}
 	}
-
-	// Single value format
-	if checksum == "" && len(strings.Fields(bodyString)) == 1 {
-		checksum = strings.Fields(bodyString)[0]
+	for _, algo := range []string{"sha512", "sha256"} {
+		if hash := hashes[algo]; hash != "" {
+			return hash, algo, nil
+		}
 	}
-
-	if checksum == "" {
-		return "", "", fmt.Errorf("for %s not found in checksum file", filename)
-	}
-
-	algo, err := DetectAlgorithm(checksum)
-	if err != nil {
-		return "", "", err
-	}
-
-	return checksum, algo, nil
+	return "", "", fmt.Errorf("SHA-256 or SHA-512 checksum for %s not found", filename)
 }
 
 // DetectAlgorithm detects the hash algorithm based on checksum length.
