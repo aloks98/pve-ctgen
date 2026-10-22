@@ -47,18 +47,21 @@ func newVMLaunchCmd() *cobra.Command {
 			cores, _ := cmd.Flags().GetInt("cores")
 			overwrite, _ := cmd.Flags().GetBool("overwrite")
 
+			if templateID < 100 || templateID > 999999999 || vmID < 100 || vmID > 999999999 || memory < 0 || memory > 2147483647 || cores < 0 || cores > 8192 {
+				return fmt.Errorf("invalid VM ID, memory or cores")
+			}
 			node, err := db.GetNode(nodeName)
 			if err != nil {
 				return fmt.Errorf("node %q: %w", nodeName, err)
 			}
 
-			client, err := managergrpc.NewClient(node.Address, node.APIKey)
+			client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 			if err != nil {
 				return fmt.Errorf("connect: %w", err)
 			}
 			defer client.Close()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
 
 			// Detect init type. Prefer the template's tags as reported by the
@@ -88,16 +91,20 @@ func newVMLaunchCmd() *cobra.Command {
 			}
 
 			resp, err := client.LaunchVM(ctx, &pb.LaunchVMRequest{
-				TemplateId:  int32(templateID),
-				NewVmId:     int32(vmID),
-				Name:        name,
-				Start:       start,
-				StartAtBoot: startAtBoot,
-				IpConfig:    ipConfig,
-				Memory:      int32(memory),
-				Cores:       int32(cores),
-				InitType:    initType,
-				Overwrite:   overwrite,
+				TemplateId:   int32(templateID),
+				NewVmId:      int32(vmID),
+				Name:         name,
+				Start:        start,
+				StartAtBoot:  startAtBoot,
+				IpConfig:     ipConfig,
+				Memory:       int32(memory),
+				Cores:        int32(cores),
+				InitType:     initType,
+				Overwrite:    overwrite,
+				Hostname:     cmd.Flag("hostname").Value.String(),
+				Nameserver:   cmd.Flag("nameserver").Value.String(),
+				SearchDomain: cmd.Flag("search-domain").Value.String(),
+				Profile:      cmd.Flag("profile").Value.String(),
 			})
 			if err != nil {
 				return fmt.Errorf("launch VM: %w", err)
@@ -106,7 +113,7 @@ func newVMLaunchCmd() *cobra.Command {
 			if resp.Success {
 				fmt.Printf("VM %d created: %s\n", resp.VmId, resp.Message)
 			} else {
-				fmt.Printf("Failed: %s\n", resp.Message)
+				return fmt.Errorf("launch failed: %s", resp.Message)
 			}
 			return nil
 		},
@@ -117,7 +124,11 @@ func newVMLaunchCmd() *cobra.Command {
 	cmd.Flags().String("node", "", "Target node")
 	cmd.Flags().Bool("start", false, "Start VM after creation")
 	cmd.Flags().Bool("start-at-boot", false, "Start VM at boot")
-	cmd.Flags().String("ip", "dhcp", "IP configuration")
+	cmd.Flags().String("ip", "ip=dhcp", "IP configuration")
+	cmd.Flags().String("hostname", "", "Guest hostname or FQDN")
+	cmd.Flags().String("nameserver", "", "Space-separated DNS server addresses")
+	cmd.Flags().String("search-domain", "", "DNS search domain")
+	cmd.Flags().String("profile", "", "Node profile")
 	cmd.Flags().Int("memory", 2048, "Memory in MB")
 	cmd.Flags().Int("cores", 2, "CPU cores")
 	cmd.Flags().Bool("overwrite", false, "Destroy and replace if the VM ID already exists")
@@ -145,22 +156,22 @@ func newVMListCmd() *cobra.Command {
 				return fmt.Errorf("node %q: %w", nodeName, err)
 			}
 
-			client, err := managergrpc.NewClient(node.Address, node.APIKey)
+			client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 			if err != nil {
 				return fmt.Errorf("connect: %w", err)
 			}
 			defer client.Close()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			resp, err := client.ListTemplates(ctx)
+			resp, err := client.ListVMs(ctx)
 			if err != nil {
-				return fmt.Errorf("list templates: %w", err)
+				return fmt.Errorf("list VMs: %w", err)
 			}
 
 			if len(resp.Templates) == 0 {
-				fmt.Println("No templates found on node.")
+				fmt.Println("No VMs found on node.")
 				return nil
 			}
 

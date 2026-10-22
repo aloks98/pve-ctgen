@@ -3,15 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
 
+	"github.com/aloks98/pve-ctgen/internal/manager/buildrun"
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
-	"github.com/aloks98/pve-ctgen/internal/manager/initresolve"
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/components"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
@@ -335,96 +333,20 @@ func (m AppModel) rightStatus() string {
 func runBuildInBackground(db *store.DB, templates []models.Template, node models.Node, events chan<- *pb.BuildEvent) {
 	defer close(events)
 
-	// Gather build steps
-	steps, _ := db.ListBuildSteps()
-	var pbSteps []*pb.BuildStep
-	for _, s := range steps {
-		pbSteps = append(pbSteps, &pb.BuildStep{Name: s.Name, Command: s.Command})
-	}
-
-	client, err := managergrpc.NewClient(node.Address, node.APIKey)
+	client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 	if err != nil {
-		events <- &pb.BuildEvent{
-			Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
-			Message: fmt.Sprintf("connect to %s: %v", node.Label(), err),
-		}
+		events <- &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()}
 		return
 	}
 	defer client.Close()
-
 	for _, tmpl := range templates {
-		buildID := uuid.New().String()
-
-		// Resolve init content (cloud-init YAML or Butane → Ignition JSON)
-		initType := tmpl.EffectiveInitType()
-		ciContent, ciFilename, err := initresolve.Resolve(db, tmpl)
-		if err != nil {
-			events <- &pb.BuildEvent{
-				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
-				BuildId: buildID,
-				Message: fmt.Sprintf("init config for %s: %v", tmpl.Name, err),
-			}
-			continue
-		}
-
-		db.CreateBuild(buildID, tmpl.Name, node.Name)
-
-		req := &pb.BuildRequest{
-			BuildId: buildID,
-			Image: &pb.Image{
-				Id:          int32(tmpl.VMID),
-				Name:        tmpl.Name,
-				Url:         tmpl.URL,
-				ChecksumUrl: tmpl.ChecksumURL,
-				Tags:        tmpl.Tags,
-				Vendor:      ciFilename,
-			},
-			Steps:             pbSteps,
-			CloudinitContent:  ciContent,
-			CloudinitFilename: ciFilename,
-			InitType:          initType,
-		}
-
-		stream, err := client.Build(context.Background(), req)
-		if err != nil {
-			events <- &pb.BuildEvent{
-				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
-				BuildId: buildID,
-				Message: fmt.Sprintf("RPC failed for %s: %v", tmpl.Name, err),
-			}
-			db.UpdateBuildStatus(buildID, "failed")
-			continue
-		}
-
-		var failed bool
-		for {
-			event, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				events <- &pb.BuildEvent{
-					Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
-					BuildId: buildID,
-					Message: fmt.Sprintf("stream error: %v", err),
-				}
-				failed = true
-				break
-			}
-			events <- event
-			if event.Type == pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_COMPLETED {
-				break
-			}
-			if event.Type == pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED {
-				failed = true
-				break
-			}
-		}
-
-		if failed {
-			db.UpdateBuildStatus(buildID, "failed")
-		} else {
-			db.UpdateBuildStatus(buildID, "completed")
+		reportedFailure := false
+		err := buildrun.Run(context.Background(), db, client, tmpl, node.Name, nil, func(e *pb.BuildEvent) {
+			events <- e
+			reportedFailure = e.Type == pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED
+		})
+		if err != nil && !reportedFailure {
+			events <- &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()}
 		}
 	}
 }

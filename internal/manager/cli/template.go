@@ -79,6 +79,8 @@ func newTemplateAddCmd() *cobra.Command {
 
 			t := &models.Template{
 				VMID:        vmID,
+				Profile:     cmd.Flag("profile").Value.String(),
+				InitType:    cmd.Flag("init-type").Value.String(),
 				Name:        name,
 				URL:         url,
 				ChecksumURL: checksumURL,
@@ -103,6 +105,8 @@ func newTemplateAddCmd() *cobra.Command {
 	cmd.Flags().String("name", "", "Template name")
 	cmd.Flags().String("url", "", "Image download URL")
 	cmd.Flags().String("checksum-url", "", "Checksum file URL")
+	cmd.Flags().String("profile", "", "Node build profile")
+	cmd.Flags().String("init-type", "cloudinit", "cloudinit or ignition")
 	cmd.Flags().String("tags", "", "Comma-separated tags")
 	cmd.Flags().String("cloudinit", "", "Cloud-init config name")
 	_ = cmd.MarkFlagRequired("vm-id")
@@ -128,7 +132,7 @@ func newTemplateShowCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Name:         %s\n", t.Name)
+			fmt.Printf("Name:         %s\nProfile:      %s\nInit type:    %s\n", t.Name, t.Profile, t.EffectiveInitType())
 			fmt.Printf("VM ID:        %d\n", t.VMID)
 			fmt.Printf("URL:          %s\n", t.URL)
 			fmt.Printf("Checksum URL: %s\n", t.ChecksumURL)
@@ -154,6 +158,15 @@ func newTemplateEditCmd() *cobra.Command {
 			defer db.Close()
 
 			updates := make(map[string]interface{})
+			for _, key := range []string{"profile", "init-type"} {
+				if cmd.Flags().Changed(key) {
+					k := key
+					if k == "init-type" {
+						k = "init_type"
+					}
+					updates[k] = cmd.Flag(key).Value.String()
+				}
+			}
 			if cmd.Flags().Changed("vm-id") {
 				v, _ := cmd.Flags().GetInt("vm-id")
 				updates["vm_id"] = v
@@ -196,6 +209,8 @@ func newTemplateEditCmd() *cobra.Command {
 	cmd.Flags().Int("vm-id", 0, "Proxmox VM ID")
 	cmd.Flags().String("url", "", "Image download URL")
 	cmd.Flags().String("checksum-url", "", "Checksum file URL")
+	cmd.Flags().String("profile", "", "Node build profile")
+	cmd.Flags().String("init-type", "cloudinit", "cloudinit or ignition")
 	cmd.Flags().String("tags", "", "Comma-separated tags")
 	cmd.Flags().String("cloudinit", "", "Cloud-init config name (empty to unset)")
 	return cmd

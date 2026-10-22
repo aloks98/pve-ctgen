@@ -2,21 +2,29 @@ package builder
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"github.com/aloks98/pve-ctgen/internal/shared/models"
+	"github.com/aloks98/pve-ctgen/internal/shared/validation"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aloks98/pve-ctgen/internal/minion/executor"
-	"github.com/aloks98/pve-ctgen/internal/shared/checksum"
+	"github.com/aloks98/pve-ctgen/internal/minion/proxmox"
 	"github.com/aloks98/pve-ctgen/internal/shared/cloudinit"
 	"github.com/aloks98/pve-ctgen/internal/shared/download"
+	"github.com/aloks98/pve-ctgen/internal/shared/filelock"
 	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 )
 
 // Config holds builder runtime paths.
 type Config struct {
+	Profile      models.BuildProfile
+	NodeName     string
 	ISOPath      string
 	SnippetsPath string
 	WorkDir      string
@@ -27,8 +35,19 @@ type Config struct {
 func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan<- *pb.BuildEvent) {
 	defer close(events)
 
+	if err := validation.Build(req); err != nil {
+		select {
+		case events <- &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()}:
+		case <-ctx.Done():
+		}
+		return
+	}
+
 	buildID := req.BuildId
 	img := req.Image
+	if cfg.Profile.SnippetsPath != "" {
+		cfg.SnippetsPath = cfg.Profile.SnippetsPath
+	}
 	steps := req.Steps
 
 	sendEvent := func(e *pb.BuildEvent) {
@@ -37,6 +56,26 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 		case events <- e:
 		case <-ctx.Done():
 		}
+	}
+
+	releaseVM, err := filelock.Acquire(ctx, filepath.Join(cfg.WorkDir, "locks", fmt.Sprintf("vm-%d.lock", img.Id)))
+	if err != nil {
+		sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()})
+		return
+	}
+	defer releaseVM()
+	workspace, err := os.MkdirTemp(cfg.WorkDir, "build-")
+	if err != nil {
+		sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()})
+		return
+	}
+	defer os.RemoveAll(workspace)
+
+	pve := proxmox.New(cfg.NodeName)
+	overwrite := req.Options["overwrite"] == "true"
+	if _, err := pve.CheckBuild(ctx, img.Id, overwrite); err != nil {
+		sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()})
+		return
 	}
 
 	// Write init config (cloud-init YAML or Ignition JSON).
@@ -52,8 +91,9 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 				return
 			}
 		}
-		ciPath := filepath.Join(cfg.SnippetsPath, req.CloudinitFilename)
-		if err := os.WriteFile(ciPath, req.CloudinitContent, 0644); err != nil {
+		snippetName := buildID + "-" + req.CloudinitFilename
+		ciPath := filepath.Join(cfg.SnippetsPath, snippetName)
+		if err := fileutil.AtomicWrite(ciPath, req.CloudinitContent, 0600); err != nil {
 			sendEvent(&pb.BuildEvent{
 				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
 				Message: fmt.Sprintf("write init config failed: %v", err),
@@ -76,38 +116,18 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 		StepName: "Download & Verify",
 	})
 
-	filePath := filepath.Join(cfg.ISOPath, img.Name)
-	needsDownload := true
-
-	if _, err := os.Stat(filePath); err == nil && img.ChecksumUrl != "" {
-		filenameFromURL := filepath.Base(img.Url)
-		expectedCS, algo, err := checksum.GetExpectedChecksum(img.ChecksumUrl, filenameFromURL)
-		if err == nil {
-			localCS, err := checksum.CalculateFileChecksum(filePath, algo)
-			if err == nil && localCS == expectedCS {
-				sendEvent(&pb.BuildEvent{
-					Type:    pb.BuildEventType_BUILD_EVENT_TYPE_LOG,
-					Message: fmt.Sprintf("Checksum match (%s). Skipping download.", algo),
-				})
-				needsDownload = false
-			}
-		}
-	} else if _, err := os.Stat(filePath); err == nil && img.ChecksumUrl == "" {
-		sendEvent(&pb.BuildEvent{
-			Type:    pb.BuildEventType_BUILD_EVENT_TYPE_LOG,
-			Message: "File exists, no checksum URL. Skipping download.",
-		})
-		needsDownload = false
+	cacheKey := fmt.Sprintf("%x", sha256.Sum256([]byte(img.Url)))
+	filePath := filepath.Join(cfg.ISOPath, cacheKey)
+	releaseCache, err := filelock.Acquire(ctx, filepath.Join(cfg.WorkDir, "locks", "image-"+cacheKey+".lock"))
+	if err != nil {
+		sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()})
+		return
 	}
-
-	if needsDownload {
-		sendEvent(&pb.BuildEvent{
-			Type:    pb.BuildEventType_BUILD_EVENT_TYPE_LOG,
-			Message: fmt.Sprintf("Downloading %s", img.Url),
-		})
+	defer releaseCache()
+	{
 
 		lastProgress := time.Time{}
-		err := download.File(ctx, img.Url, filePath, func(downloaded, total int64) {
+		err := download.Verified(ctx, img.Url, img.ChecksumUrl, filePath, func(downloaded, total int64) {
 			if time.Since(lastProgress) > 100*time.Millisecond || downloaded == total {
 				lastProgress = time.Now()
 				var progress float64
@@ -140,7 +160,7 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 	})
 
 	// Copy to working file
-	workFile := filepath.Join(cfg.WorkDir, "base.qcow2")
+	workFile := filepath.Join(workspace, "base.qcow2")
 	if err := os.MkdirAll(cfg.WorkDir, 0755); err != nil {
 		sendEvent(&pb.BuildEvent{
 			Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
@@ -170,16 +190,53 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 		StepName: "Copy Image",
 	})
 
+	releaseCache()
 	// Execute each build step
 	vars := map[string]string{
-		"ID":       fmt.Sprintf("%d", img.Id),
-		"Name":     img.Name,
-		"Tags":     img.Tags,
-		"Vendor":   img.Vendor,
-		"FilePath": workFile,
+		"ID":             fmt.Sprintf("%d", img.Id),
+		"Name":           img.Name,
+		"Tags":           img.Tags,
+		"Vendor":         "",
+		"Storage":        cfg.Profile.Storage,
+		"SnippetStorage": cfg.Profile.SnippetStorage,
+		"Bridge":         cfg.Profile.Bridge,
+		"DiskSize":       cfg.Profile.DiskSize,
+		"DiskFormat":     cfg.Profile.DiskFormat,
+		"FilePath":       workFile,
+	}
+
+	if req.CloudinitFilename != "" {
+		vars["Vendor"] = buildID + "-" + req.CloudinitFilename
+	}
+	// Reject images with host-file backing references before any VM mutation.
+	info, err := pve.Run(ctx, "qemu-img", "info", "--output=json", workFile)
+	var imageInfo struct {
+		Format  string `json:"format"`
+		Backing string `json:"backing-filename"`
+	}
+	if err == nil {
+		err = json.Unmarshal(info, &imageInfo)
+	}
+	if err != nil || imageInfo.Backing != "" || (imageInfo.Format != "raw" && imageInfo.Format != "qcow2") {
+		sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: "unsupported image format or backing file"})
+		return
+	}
+
+	// Recheck immediately before replacement, after download and validation.
+	replace, err := pve.CheckBuild(ctx, img.Id, overwrite)
+	if err == nil && replace {
+		err = pve.Destroy(ctx, img.Id, false)
+	}
+	if err != nil {
+		sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()})
+		return
 	}
 
 	for i, step := range steps {
+		// Legacy default steps are superseded by guarded replacement above.
+		if step.Name == "Destroy VM if exists" {
+			continue
+		}
 		if ctx.Err() != nil {
 			sendEvent(&pb.BuildEvent{
 				Type:    pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED,
@@ -194,6 +251,14 @@ func RunBuild(ctx context.Context, req *pb.BuildRequest, cfg Config, events chan
 			StepIndex: int32(i),
 		})
 
+		if strings.Contains(step.Command, "{{.ImportedDisk}}") {
+			vmcfg, err := pve.Config(ctx, img.Id)
+			if err != nil || vmcfg["unused0"] == "" {
+				sendEvent(&pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: "imported disk not found in unused0"})
+				return
+			}
+			vars["ImportedDisk"] = strings.SplitN(vmcfg["unused0"], ",", 2)[0]
+		}
 		command := executor.SubstituteVars(step.Command, vars)
 
 		// Log the actual command being run

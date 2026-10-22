@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	minionconfig "github.com/aloks98/pve-ctgen/internal/minion/config"
 	"github.com/aloks98/pve-ctgen/internal/minion/server"
@@ -23,17 +26,14 @@ func newServeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath, _ := cmd.Flags().GetString("config")
 
-			cfg, err := minionconfig.Load(configPath)
+			cfg, err := minionconfig.Prepare(configPath)
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			if err := cfg.EnsureNodeName(configPath); err != nil {
-				return fmt.Errorf("detect node name: %w", err)
-			}
-
-			if err := cfg.EnsureAPIKey(configPath); err != nil {
-				return fmt.Errorf("ensure API key: %w", err)
+			pair, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+			if err != nil {
+				return fmt.Errorf("load TLS identity: %w", err)
 			}
 
 			// Create required directories
@@ -49,11 +49,16 @@ func newServeCmd() *cobra.Command {
 			}
 
 			grpcServer := grpc.NewServer(
+				grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13})),
 				grpc.UnaryInterceptor(server.APIKeyInterceptor(cfg.APIKey)),
 				grpc.StreamInterceptor(server.APIKeyStreamInterceptor(cfg.APIKey)),
 			)
 
 			minionServer := server.New(cfg)
+			if err := minionServer.InitJobs(); err != nil {
+				return err
+			}
+			defer minionServer.Close()
 			pb.RegisterMinionServiceServer(grpcServer, minionServer)
 
 			// Graceful shutdown
@@ -62,7 +67,13 @@ func newServeCmd() *cobra.Command {
 			go func() {
 				<-sigCh
 				log.Println("Shutting down...")
-				grpcServer.GracefulStop()
+				done := make(chan struct{})
+				go func() { minionServer.Close(); grpcServer.GracefulStop(); close(done) }()
+				select {
+				case <-done:
+				case <-time.After(15 * time.Second):
+					grpcServer.Stop()
+				}
 			}()
 
 			log.Printf("Minion %q listening on %s\n", cfg.NodeName, cfg.ListenAddress)

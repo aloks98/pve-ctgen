@@ -20,7 +20,17 @@ var (
 // NewManagerCmd creates the manager command group.
 func NewManagerCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "manager",
+		Use: "manager",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := managerconfig.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+			if flag := cmd.Flags().Lookup("node"); flag != nil && !flag.Changed && cfg.DefaultNode != "" {
+				return cmd.Flags().Set("node", cfg.DefaultNode)
+			}
+			return nil
+		},
 		Short: "Manager mode — manage templates, configs, and trigger builds",
 		Long:  "Manager runs on your workstation and manages templates, cloud-init configs, build steps, and triggers builds on Minion nodes via gRPC.",
 	}
@@ -38,6 +48,7 @@ func NewManagerCmd() *cobra.Command {
 		newVMCmd(),
 		newFleetCmd(),
 		newImportCmd(),
+		newDoctorCmd(),
 	)
 
 	return cmd

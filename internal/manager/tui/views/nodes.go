@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
@@ -99,7 +98,7 @@ func (m NodesModel) Update(msg tea.Msg) (NodesModel, tea.Cmd) {
 			m.mode = nodesModeList
 			return m, nil
 		}
-		if _, err := m.db.CreateNode(msg.name, msg.displayName, msg.address, msg.apiKey); err != nil {
+		if _, err := m.db.CreateNode(msg.name, msg.displayName, msg.address, msg.apiKey, msg.fingerprint); err != nil {
 			m.statusMsg = fmt.Sprintf("Error: %v", err)
 			m.mode = nodesModeList
 			return m, nil
@@ -235,6 +234,7 @@ type addNodeResultMsg struct {
 	displayName string
 	address     string
 	apiKey      string
+	fingerprint string
 	version     string
 	err         error
 }
@@ -244,7 +244,7 @@ func (m NodesModel) addNodeCmd(info token.ConnectionInfo, displayName string) te
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		client, err := managergrpc.NewClient(info.Address, info.APIKey)
+		client, err := managergrpc.NewClient(info.Address, info.APIKey, info.TLSFingerprint)
 		if err != nil {
 			return addNodeResultMsg{err: fmt.Errorf("connect: %w", err)}
 		}
@@ -260,6 +260,7 @@ func (m NodesModel) addNodeCmd(info token.ConnectionInfo, displayName string) te
 			displayName: displayName,
 			address:     info.Address,
 			apiKey:      info.APIKey,
+			fingerprint: info.TLSFingerprint,
 			version:     resp.ProxmoxVersion,
 		}
 	}
@@ -270,7 +271,7 @@ func (m NodesModel) checkHealthCmd(node models.Node) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		client, err := managergrpc.NewClient(node.Address, node.APIKey)
+		client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 		if err != nil {
 			return nodeHealthMsg{label: node.Label(), err: err}
 		}

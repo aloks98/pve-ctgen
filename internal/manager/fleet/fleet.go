@@ -4,10 +4,12 @@ package fleet
 
 import (
 	"fmt"
+	"github.com/aloks98/pve-ctgen/internal/shared/validation"
+	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 	"os"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/aloks98/pve-ctgen/internal/shared/configutil"
 )
 
 // Spec is a declarative description of a fleet of VMs.
@@ -23,9 +25,9 @@ type Settings struct {
 	Template     string `yaml:"template,omitempty"`
 	Cores        int32  `yaml:"cores,omitempty"`
 	Memory       int32  `yaml:"memory,omitempty"`
-	IP           string `yaml:"ip,omitempty"` // count-mode ipconfig0; default "ip=dhcp"
-	CIDR         string `yaml:"cidr,omitempty"`     // prefix for hosts-mode bare IPs, e.g. "16"
-	Gateway      string `yaml:"gateway,omitempty"`  // gw for hosts-mode bare IPs
+	IP           string `yaml:"ip,omitempty"`      // count-mode ipconfig0; default "ip=dhcp"
+	CIDR         string `yaml:"cidr,omitempty"`    // prefix for hosts-mode bare IPs, e.g. "16"
+	Gateway      string `yaml:"gateway,omitempty"` // gw for hosts-mode bare IPs
 	Nameserver   string `yaml:"nameserver,omitempty"`
 	SearchDomain string `yaml:"search_domain,omitempty"`
 	Start        *bool  `yaml:"start,omitempty"`
@@ -89,7 +91,7 @@ func Load(path string) (*Spec, error) {
 		return nil, fmt.Errorf("read fleet manifest: %w", err)
 	}
 	var s Spec
-	if err := yaml.Unmarshal(b, &s); err != nil {
+	if err := configutil.Decode(b, &s); err != nil {
 		return nil, fmt.Errorf("parse fleet manifest: %w", err)
 	}
 	if len(s.Groups) == 0 {
@@ -253,6 +255,9 @@ func (s *Spec) Resolve() ([]PlannedVM, error) {
 		}
 
 		// Count-based mode.
+		if g.Count > 10000 || int64(g.VMIDStart)+int64(g.Count)-1 > 999999999 {
+			return nil, fmt.Errorf("%s: count or VM ID range exceeds limits", label)
+		}
 		if g.Count <= 0 {
 			return nil, fmt.Errorf("%s: count must be > 0 (or use `hosts:`)", label)
 		}
@@ -301,6 +306,18 @@ func (s *Spec) Resolve() ([]PlannedVM, error) {
 				StartAtBoot:  deref(eff.StartAtBoot),
 				Overwrite:    deref(eff.Overwrite),
 			})
+		}
+	}
+	for _, vm := range plan {
+		if err := validation.Name(vm.Node); err != nil {
+			return nil, err
+		}
+		source := int32(100)
+		if vm.VMID == 100 {
+			source = 101
+		}
+		if err := validation.Launch(&pb.LaunchVMRequest{TemplateId: source, NewVmId: vm.VMID, Name: vm.Name, Hostname: vm.Hostname, IpConfig: vm.IP, Memory: vm.Memory, Cores: vm.Cores, Nameserver: vm.Nameserver, SearchDomain: vm.SearchDomain}); err != nil {
+			return nil, fmt.Errorf("%s: %w", vm.Name, err)
 		}
 	}
 	return plan, nil

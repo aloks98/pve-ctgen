@@ -6,6 +6,7 @@ import (
 
 	minionconfig "github.com/aloks98/pve-ctgen/internal/minion/config"
 	"github.com/aloks98/pve-ctgen/internal/shared/token"
+	"github.com/aloks98/pve-ctgen/internal/shared/transport"
 	"github.com/spf13/cobra"
 )
 
@@ -17,19 +18,15 @@ func newConnectCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath, _ := cmd.Flags().GetString("config")
 
-			cfg, err := minionconfig.Load(configPath)
+			cfg, err := minionconfig.Prepare(configPath)
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			if err := cfg.EnsureNodeName(configPath); err != nil {
-				return fmt.Errorf("detect node name: %w", err)
+			fingerprint, err := transport.Fingerprint(cfg.TLSCert)
+			if err != nil {
+				return err
 			}
-
-			if err := cfg.EnsureAPIKey(configPath); err != nil {
-				return fmt.Errorf("ensure API key: %w", err)
-			}
-
 			// Detect address
 			host, port, _ := net.SplitHostPort(cfg.ListenAddress)
 			if host == "" || host == "0.0.0.0" {
@@ -38,9 +35,10 @@ func newConnectCmd() *cobra.Command {
 			address := net.JoinHostPort(host, port)
 
 			tok, err := token.Encode(token.ConnectionInfo{
-				Name:    cfg.NodeName,
-				Address: address,
-				APIKey:  cfg.APIKey,
+				Name:           cfg.NodeName,
+				Address:        address,
+				APIKey:         cfg.APIKey,
+				TLSFingerprint: fingerprint,
 			})
 			if err != nil {
 				return fmt.Errorf("encode token: %w", err)
@@ -50,7 +48,7 @@ func newConnectCmd() *cobra.Command {
 			fmt.Println("🔗 Minion Connection Info")
 			fmt.Printf("  Node:    %s\n", cfg.NodeName)
 			fmt.Printf("  Address: %s\n", address)
-			fmt.Printf("  API Key: %s...%s\n", cfg.APIKey[:6], cfg.APIKey[len(cfg.APIKey)-4:])
+			fmt.Println("  Authentication: API key + pinned TLS")
 			fmt.Println()
 			fmt.Println("Connection token:")
 			fmt.Printf("  %s\n", tok)

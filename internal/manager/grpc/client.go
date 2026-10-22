@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aloks98/pve-ctgen/internal/shared/transport"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
@@ -20,12 +21,20 @@ type Client struct {
 }
 
 // NewClient creates a new gRPC client connected to the given address.
-func NewClient(address, apiKey string) (*Client, error) {
+func NewClient(address, apiKey string, fingerprints ...string) (*Client, error) {
+	var pin string
+	if len(fingerprints) > 0 {
+		pin = fingerprints[0]
+	}
+	tlsConfig, err := transport.ClientTLS(pin)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	conn, err := grpc.DialContext(ctx, address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -66,4 +75,17 @@ func (c *Client) LaunchVM(ctx context.Context, req *pb.LaunchVMRequest) (*pb.Lau
 // ListTemplates calls the ListTemplates RPC.
 func (c *Client) ListTemplates(ctx context.Context) (*pb.ListTemplatesResponse, error) {
 	return c.client.ListTemplates(c.authCtx(ctx), &pb.ListTemplatesRequest{})
+}
+
+func (c *Client) WatchBuild(ctx context.Context, req *pb.WatchBuildRequest) (pb.MinionService_WatchBuildClient, error) {
+	return c.client.WatchBuild(c.authCtx(ctx), req)
+}
+func (c *Client) CancelBuild(ctx context.Context, id string) (*pb.CancelBuildResponse, error) {
+	return c.client.CancelBuild(c.authCtx(ctx), &pb.CancelBuildRequest{BuildId: id})
+}
+func (c *Client) Preflight(ctx context.Context, req *pb.PreflightRequest) (*pb.PreflightResponse, error) {
+	return c.client.Preflight(c.authCtx(ctx), req)
+}
+func (c *Client) ListVMs(ctx context.Context) (*pb.ListTemplatesResponse, error) {
+	return c.client.ListVMs(c.authCtx(ctx), &pb.ListTemplatesRequest{})
 }

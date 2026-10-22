@@ -2,12 +2,22 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/aloks98/pve-ctgen/internal/minion/jobs"
+	"github.com/aloks98/pve-ctgen/internal/minion/preflight"
+	"github.com/aloks98/pve-ctgen/internal/shared/cloudinit"
+	"github.com/aloks98/pve-ctgen/internal/shared/fileutil"
+	"github.com/aloks98/pve-ctgen/internal/shared/validation"
+	"google.golang.org/protobuf/proto"
 	"log"
 	"os"
-	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -16,6 +26,8 @@ import (
 
 	"github.com/aloks98/pve-ctgen/internal/minion/builder"
 	minionconfig "github.com/aloks98/pve-ctgen/internal/minion/config"
+	"github.com/aloks98/pve-ctgen/internal/minion/proxmox"
+	"github.com/aloks98/pve-ctgen/internal/shared/filelock"
 	"github.com/aloks98/pve-ctgen/internal/shared/ignition"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 )
@@ -23,97 +35,157 @@ import (
 // Server implements the MinionService gRPC service.
 type Server struct {
 	pb.UnimplementedMinionServiceServer
-	cfg *minionconfig.Config
+	cfg     *minionconfig.Config
+	pve     *proxmox.Client
+	jobOnce sync.Once
+	jobs    *jobs.Manager
+	jobErr  error
 }
 
 // New creates a new Minion gRPC server.
 func New(cfg *minionconfig.Config) *Server {
-	return &Server{cfg: cfg}
+	return &Server{cfg: cfg, pve: proxmox.New(cfg.NodeName)}
 }
 
-// Build handles a build request with streaming events.
+func (s *Server) InitJobs() error {
+	s.jobOnce.Do(func() {
+		cfg := builder.Config{ISOPath: s.cfg.ISOPath, SnippetsPath: s.cfg.SnippetsPath, WorkDir: s.cfg.WorkDir, NodeName: s.cfg.NodeName}
+		s.jobs, s.jobErr = jobs.New(s.cfg.JobsDir, func(ctx context.Context, req *pb.BuildRequest, events chan<- *pb.BuildEvent) {
+			p, _ := s.cfg.Profile(req.Options["profile"])
+			buildCfg := cfg
+			buildCfg.Profile = p
+			builder.RunBuild(ctx, req, buildCfg, events)
+		})
+	})
+	return s.jobErr
+}
+func (s *Server) Close() {
+	if s.jobs != nil {
+		s.jobs.Close()
+	}
+}
 func (s *Server) Build(req *pb.BuildRequest, stream pb.MinionService_BuildServer) error {
-	events := make(chan *pb.BuildEvent, 100)
-
-	ctx := stream.Context()
-	builderCfg := builder.Config{
-		ISOPath:      s.cfg.ISOPath,
-		SnippetsPath: s.cfg.SnippetsPath,
-		WorkDir:      s.cfg.WorkDir,
+	if err := validation.Build(req); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
-
-	go builder.RunBuild(ctx, req, builderCfg, events)
-
-	for event := range events {
-		if err := stream.Send(event); err != nil {
-			return err
-		}
+	if err := s.InitJobs(); err != nil {
+		return status.Error(codes.Internal, err.Error())
 	}
-
-	return nil
+	ctx, cancel := context.WithTimeout(stream.Context(), 60*time.Second)
+	defer cancel()
+	checks := preflight.Check(ctx, s.cfg, s.pve, &pb.PreflightRequest{Profile: req.Options["profile"], Build: req})
+	if err := preflight.Error(checks); err != nil {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	req = proto.Clone(req).(*pb.BuildRequest)
+	profile, _ := s.cfg.Profile(req.Options["profile"])
+	content, err := cloudinit.ApplyProfile(req.CloudinitContent, req.InitType, profile)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	req.CloudinitContent = content
+	if err := s.jobs.Start(req); err != nil {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return s.jobs.Watch(stream.Context(), req.BuildId, 0, stream.Send)
+}
+func (s *Server) WatchBuild(req *pb.WatchBuildRequest, stream pb.MinionService_WatchBuildServer) error {
+	if err := s.InitJobs(); err != nil {
+		return err
+	}
+	return s.jobs.Watch(stream.Context(), req.BuildId, req.AfterSequence, stream.Send)
+}
+func (s *Server) CancelBuild(ctx context.Context, req *pb.CancelBuildRequest) (*pb.CancelBuildResponse, error) {
+	if err := s.InitJobs(); err != nil {
+		return nil, err
+	}
+	ok, err := s.jobs.Cancel(req.BuildId)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &pb.CancelBuildResponse{Cancelled: ok, Message: "Cancellation requested; watch the build for its final status"}, nil
 }
 
 // Health returns the node's health information.
-func (s *Server) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResponse, error) {
-	resp := &pb.HealthResponse{
-		NodeName: s.cfg.NodeName,
-		Version:  "dev",
-		Healthy:  true,
-	}
-
-	// Get Proxmox version
-	out, err := exec.Command("pveversion").Output()
-	if err == nil {
+func (s *Server) Preflight(ctx context.Context, req *pb.PreflightRequest) (*pb.PreflightResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	return preflight.Check(ctx, s.cfg, s.pve, req), nil
+}
+func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthResponse, error) {
+	resp := &pb.HealthResponse{NodeName: s.cfg.NodeName, Version: "dev", Healthy: true}
+	out, err := s.pve.Run(ctx, "pveversion")
+	if err != nil {
+		resp.Healthy = false
+	} else {
 		resp.ProxmoxVersion = strings.TrimSpace(string(out))
 	}
-
-	// Get available storage
-	out, err = exec.Command("pvesm", "status", "--output-format", "json").Output()
+	out, err = s.pve.Run(ctx, "pvesh", "get", "/nodes/"+s.cfg.NodeName+"/storage", "--output-format", "json")
+	var storages []struct {
+		Storage string `json:"storage"`
+		Active  int    `json:"active"`
+	}
 	if err == nil {
-		// Parse storage names from output
-		lines := strings.Split(string(out), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "\"storage\"") {
-				// Simplified parsing; in production parse JSON properly
-				resp.AvailableStorage = append(resp.AvailableStorage, line)
+		err = json.Unmarshal(out, &storages)
+	}
+	if err != nil {
+		resp.Healthy = false
+	} else {
+		for _, storage := range storages {
+			if storage.Active == 1 {
+				resp.AvailableStorage = append(resp.AvailableStorage, storage.Storage)
 			}
 		}
 	}
-
 	return resp, nil
 }
 
-// vmExists reports whether a VM/template with the given ID exists on this node.
-func vmExists(vmID int32) bool {
-	// `qm status <id>` exits non-zero if the VM doesn't exist.
-	return exec.Command("qm", "status", fmt.Sprintf("%d", vmID)).Run() == nil
-}
-
-// LaunchVM clones a template and optionally starts the VM.
-func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.LaunchVMResponse, error) {
-	vmIDStr := fmt.Sprintf("%d", req.NewVmId)
-
-	// If the target VM ID already exists, either destroy it (overwrite) or fail.
-	if vmExists(req.NewVmId) {
-		if !req.Overwrite {
-			return &pb.LaunchVMResponse{
-				VmId:    req.NewVmId,
-				Success: false,
-				Message: fmt.Sprintf("VM %d already exists (enable Overwrite to replace it)", req.NewVmId),
-			}, nil
-		}
-		// Stop (ignore errors — may already be stopped) then purge-destroy.
-		_ = exec.Command("qm", "stop", vmIDStr).Run()
-		if out, err := exec.Command("qm", "destroy", vmIDStr, "--purge", "--destroy-unreferenced-disks", "1").CombinedOutput(); err != nil {
-			return &pb.LaunchVMResponse{
-				VmId:    req.NewVmId,
-				Success: false,
-				Message: fmt.Sprintf("overwrite: destroy VM %d failed: %v\n%s", req.NewVmId, err, out),
-			}, nil
-		}
-		log.Printf("VM %d destroyed for overwrite", req.NewVmId)
+// LaunchVM validates the source and destination before any mutation.
+func (s *Server) LaunchVM(ctx context.Context, req *pb.LaunchVMRequest) (*pb.LaunchVMResponse, error) {
+	if err := validation.Launch(req); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	ids := []int{int(req.TemplateId), int(req.NewVmId)}
+	sort.Ints(ids)
+	if ids[0] == ids[1] || !proxmox.ValidID(req.TemplateId) || !proxmox.ValidID(req.NewVmId) {
+		return nil, status.Error(codes.InvalidArgument, "source and destination must be distinct valid VM IDs")
+	}
+	for _, id := range ids {
+		release, err := filelock.Acquire(ctx, filepath.Join(s.cfg.WorkDir, "locks", fmt.Sprintf("vm-%d.lock", id)))
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	replace, err := s.pve.CheckClone(ctx, req.TemplateId, req.NewVmId, req.Overwrite)
+	if err != nil {
+		return &pb.LaunchVMResponse{VmId: req.NewVmId, Message: err.Error()}, nil
+	}
+	profile, err := s.cfg.Profile(req.Profile)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := preflight.Error(preflight.Check(ctx, s.cfg, s.pve, &pb.PreflightRequest{Profile: req.Profile})); err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	sourceConfig, err := s.pve.Config(ctx, req.TemplateId)
+	if err != nil {
+		return nil, err
+	}
+	// Use the source template's init type as the authoritative value.
+	if strings.Contains(sourceConfig["tags"], "ignition") {
+		req = proto.Clone(req).(*pb.LaunchVMRequest)
+		req.InitType = "ignition"
+	}
+	if req.InitType == "ignition" && req.IpConfig != "" && req.IpConfig != "ip=dhcp" {
+		return nil, status.Error(codes.InvalidArgument, "static networking for Ignition must be configured in the Butane file")
+	}
+	if replace {
+		if err := s.pve.Destroy(ctx, req.NewVmId, true); err != nil {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+	}
+	vmIDStr := fmt.Sprintf("%d", req.NewVmId)
 
 	// Clone the template
 	args := []string{
@@ -123,8 +195,7 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 		"--full",
 	}
 
-	cmd := exec.Command("qm", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := s.pve.Run(ctx, "qm", args...)
 	if err != nil {
 		return &pb.LaunchVMResponse{
 			VmId:    req.NewVmId,
@@ -145,8 +216,8 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 		if hostname == "" {
 			hostname = req.Name
 		}
-		if err := s.applyIgnitionHostname(req.NewVmId, hostname, &setArgs); err != nil {
-			log.Printf("ignition hostname injection failed: %v", err)
+		if err := s.applyIgnitionHostname(ctx, req.NewVmId, hostname, profile.SnippetStorage, profile.SnippetsPath, &setArgs); err != nil {
+			return nil, status.Errorf(codes.Internal, "prepare ignition: %v", err)
 		}
 	}
 
@@ -159,16 +230,18 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 			}
 		}
 		metaSnippet := fmt.Sprintf("vm-%d-meta.yaml", req.NewVmId)
-		metaPath := fmt.Sprintf("%s/%s", s.cfg.SnippetsPath, metaSnippet)
+		metaPath := filepath.Join(profile.SnippetsPath, metaSnippet)
 		metaContent := fmt.Sprintf("instance-id: %d\nlocal-hostname: %s\n", req.NewVmId, vmHostname)
-		if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
-			log.Printf("write meta-data snippet failed: %v", err)
+		if err := fileutil.AtomicWrite(metaPath, []byte(metaContent), 0600); err != nil {
+			return nil, status.Errorf(codes.Internal, "prepare metadata: %v", err)
 		}
 
 		// Get current cicustom value and append meta snippet
-		cicustomOut, _ := exec.Command("bash", "-c",
-			fmt.Sprintf("qm config %d | grep cicustom | cut -d' ' -f2-", req.NewVmId)).Output()
-		cicustom := strings.TrimSpace(string(cicustomOut))
+		current, err := s.pve.Config(ctx, req.NewVmId)
+		if err != nil {
+			return nil, err
+		}
+		cicustom := current["cicustom"]
 		if cicustom != "" {
 			parts := strings.Split(cicustom, ",")
 			var filtered []string
@@ -178,9 +251,9 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 				}
 			}
 			cicustom = strings.Join(filtered, ",")
-			cicustom += fmt.Sprintf(",meta=local:snippets/%s", metaSnippet)
+			cicustom += fmt.Sprintf(",meta=%s:snippets/%s", profile.SnippetStorage, metaSnippet)
 		} else {
-			cicustom = fmt.Sprintf("meta=local:snippets/%s", metaSnippet)
+			cicustom = fmt.Sprintf("meta=%s:snippets/%s", profile.SnippetStorage, metaSnippet)
 		}
 		setArgs = append(setArgs, "--cicustom", cicustom)
 	}
@@ -210,9 +283,9 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 	}
 
 	if len(setArgs) > 2 {
-		cmd = exec.Command("qm", setArgs...)
+
 		log.Printf("LaunchVM configure: qm %s", strings.Join(setArgs, " "))
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := s.pve.Run(ctx, "qm", setArgs...); err != nil {
 			return &pb.LaunchVMResponse{
 				VmId:    req.NewVmId,
 				Success: false,
@@ -223,8 +296,7 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 
 	// Start VM if requested
 	if req.Start {
-		cmd = exec.Command("qm", "start", fmt.Sprintf("%d", req.NewVmId))
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := s.pve.Run(ctx, "qm", "start", vmIDStr); err != nil {
 			return &pb.LaunchVMResponse{
 				VmId:    req.NewVmId,
 				Success: false,
@@ -244,14 +316,12 @@ func (s *Server) LaunchVM(_ context.Context, req *pb.LaunchVMRequest) (*pb.Launc
 // applyIgnitionHostname reads the cloned VM's inherited Ignition snippet,
 // injects /etc/hostname, writes a per-VM snippet, and appends the new
 // cicustom user= override to setArgs.
-func (s *Server) applyIgnitionHostname(vmID int32, hostname string, setArgs *[]string) error {
-	// Find the base Ignition snippet the clone inherited.
-	out, err := exec.Command("bash", "-c",
-		fmt.Sprintf("qm config %d | grep cicustom | cut -d' ' -f2-", vmID)).Output()
+func (s *Server) applyIgnitionHostname(ctx context.Context, vmID int32, hostname, snippetStorage, snippetsPath string, setArgs *[]string) error {
+	current, err := s.pve.Config(ctx, vmID)
 	if err != nil {
-		return fmt.Errorf("read cicustom: %w", err)
+		return err
 	}
-	cicustom := strings.TrimSpace(string(out))
+	cicustom := current["cicustom"]
 	if cicustom == "" {
 		return fmt.Errorf("no cicustom on VM %d", vmID)
 	}
@@ -261,20 +331,18 @@ func (s *Server) applyIgnitionHostname(vmID int32, hostname string, setArgs *[]s
 	for _, part := range strings.Split(cicustom, ",") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "user=") {
-			// user=local:snippets/foo.ign  ->  foo.ign
-			val := strings.TrimPrefix(part, "user=")
-			if idx := strings.LastIndex(val, "/"); idx >= 0 {
-				baseFile = val[idx+1:]
-			} else {
-				baseFile = val
-			}
+			baseFile = strings.TrimPrefix(part, "user=")
 		}
 	}
 	if baseFile == "" {
 		return fmt.Errorf("no user= snippet in cicustom %q", cicustom)
 	}
 
-	basePath := fmt.Sprintf("%s/%s", s.cfg.SnippetsPath, baseFile)
+	out, err := s.pve.Run(ctx, "pvesm", "path", baseFile)
+	if err != nil {
+		return err
+	}
+	basePath := strings.TrimSpace(string(out))
 	baseJSON, err := os.ReadFile(basePath)
 	if err != nil {
 		return fmt.Errorf("read base ignition %s: %w", basePath, err)
@@ -286,28 +354,26 @@ func (s *Server) applyIgnitionHostname(vmID int32, hostname string, setArgs *[]s
 	}
 
 	perVMFile := fmt.Sprintf("vm-%d.ign", vmID)
-	perVMPath := fmt.Sprintf("%s/%s", s.cfg.SnippetsPath, perVMFile)
-	if err := os.WriteFile(perVMPath, modified, 0644); err != nil {
+	perVMPath := filepath.Join(snippetsPath, perVMFile)
+	if err := fileutil.AtomicWrite(perVMPath, modified, 0600); err != nil {
 		return fmt.Errorf("write per-vm ignition: %w", err)
 	}
 
 	*setArgs = append(*setArgs, "--cicustom",
-		fmt.Sprintf("user=local:snippets/%s", perVMFile))
+		fmt.Sprintf("user=%s:snippets/%s", snippetStorage, perVMFile))
 	log.Printf("VM %d: ignition hostname %q -> %s", vmID, hostname, perVMFile)
 	return nil
 }
 
 // ListTemplates returns all templates on the node using the Proxmox API via pvesh.
-func (s *Server) ListTemplates(_ context.Context, _ *pb.ListTemplatesRequest) (*pb.ListTemplatesResponse, error) {
-	hostname, _ := exec.Command("hostname").Output()
-	node := strings.TrimSpace(string(hostname))
-	if node == "" {
-		node = s.cfg.NodeName
-	}
-
-	// pvesh returns JSON with all VMs including template flag
-	cmd := exec.Command("pvesh", "get", fmt.Sprintf("/nodes/%s/qemu", node), "--output-format", "json")
-	out, err := cmd.Output()
+func (s *Server) ListTemplates(ctx context.Context, _ *pb.ListTemplatesRequest) (*pb.ListTemplatesResponse, error) {
+	return s.listVMs(ctx, true)
+}
+func (s *Server) ListVMs(ctx context.Context, _ *pb.ListTemplatesRequest) (*pb.ListTemplatesResponse, error) {
+	return s.listVMs(ctx, false)
+}
+func (s *Server) listVMs(ctx context.Context, templatesOnly bool) (*pb.ListTemplatesResponse, error) {
+	out, err := s.pve.Run(ctx, "pvesh", "get", fmt.Sprintf("/nodes/%s/qemu", s.cfg.NodeName), "--output-format", "json")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "pvesh failed: %v", err)
 	}
@@ -325,7 +391,7 @@ func (s *Server) ListTemplates(_ context.Context, _ *pb.ListTemplatesRequest) (*
 
 	var templates []*pb.TemplateInfo
 	for _, vm := range vms {
-		if vm.Template != 1 {
+		if templatesOnly && vm.Template != 1 {
 			continue
 		}
 		templates = append(templates, &pb.TemplateInfo{
@@ -369,7 +435,7 @@ func validateAPIKey(ctx context.Context, expected string) error {
 		return status.Error(codes.Unauthenticated, "missing API key")
 	}
 
-	if keys[0] != expected {
+	if expected == "" || subtle.ConstantTimeCompare([]byte(keys[0]), []byte(expected)) != 1 {
 		return status.Error(codes.Unauthenticated, "invalid API key")
 	}
 

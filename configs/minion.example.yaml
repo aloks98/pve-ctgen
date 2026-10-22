@@ -18,3 +18,28 @@ snippets_path: "/var/lib/vz/snippets"
 
 # Temporary working directory for builds
 work_dir: "/tmp/pvectgen"
+
+# Durable job journals survive minion restarts.
+jobs_dir: "/var/lib/pvectgen/jobs"
+
+# Empty TLS paths provision a self-signed identity beside this configuration.
+# Enrollment pins its SHA-256 fingerprint. Custom certificate/key paths must be absolute.
+tls_cert: ""
+tls_key: ""
+
+# Select a node profile by default, by template.profile, or with build --profile.
+default_profile: default
+profiles:
+  default:
+    storage: local-lvm
+    snippet_storage: local
+    snippets_path: /var/lib/vz/snippets
+    bridge: vmbr0
+    disk_size: 32G
+    disk_format: raw
+    # Add your public keys here; defaults ship with locked passwords and no keys.
+    # Keys go to admin for cloud-init and core for Ignition.
+    ssh_authorized_keys: []
+    timezone: UTC
+    # Optional, for Debian/Ubuntu guests only:
+    apt_proxy: ""

@@ -53,9 +53,9 @@ const (
 	fldCount // number of VMs to launch (batch)
 	fldMemory
 	fldCores
-	fldIPType    // select: dhcp / static
-	fldIPAddr    // only visible when static
-	fldGateway   // only visible when static
+	fldIPType  // select: dhcp / static
+	fldIPAddr  // only visible when static
+	fldGateway // only visible when static
 	fldNameserver
 	fldSearchDomain
 	fldStart
@@ -135,20 +135,20 @@ func (m *VMLaunchModel) initFields() {
 		return vmField{label: label, input: ti}
 	}
 	m.fields = [numFields]vmField{
-		fldVMID:        mk("VM ID", "e.g. 100 (base ID for batch)", ""),
-		fldName:        mk("Name", "e.g. k8s-worker", ""),
-		fldHostname:    mk("Hostname", "e.g. k8s-worker (optional)", ""),
-		fldCount:       mk("Count", "1", "1"),
-		fldMemory:      mk("Memory (MB)", "2048", "2048"),
-		fldCores:       mk("Cores", "2", "2"),
-		fldIPType:      {label: "IP Config", options: []string{"dhcp", "static"}, selIdx: 0},
-		fldIPAddr:      mk("IP Address", "e.g. 192.168.1.50/24", ""),
-		fldGateway:     mk("Gateway", "e.g. 192.168.1.1", ""),
-		fldNameserver:  mk("Nameserver", "e.g. 8.8.8.8 (optional)", ""),
+		fldVMID:         mk("VM ID", "e.g. 100 (base ID for batch)", ""),
+		fldName:         mk("Name", "e.g. k8s-worker", ""),
+		fldHostname:     mk("Hostname", "e.g. k8s-worker (optional)", ""),
+		fldCount:        mk("Count", "1", "1"),
+		fldMemory:       mk("Memory (MB)", "2048", "2048"),
+		fldCores:        mk("Cores", "2", "2"),
+		fldIPType:       {label: "IP Config", options: []string{"dhcp", "static"}, selIdx: 0},
+		fldIPAddr:       mk("IP Address", "e.g. 192.168.1.50/24", ""),
+		fldGateway:      mk("Gateway", "e.g. 192.168.1.1", ""),
+		fldNameserver:   mk("Nameserver", "e.g. 8.8.8.8 (optional)", ""),
 		fldSearchDomain: mk("Search Domain", "e.g. e412.in (optional)", ""),
-		fldStart:       {label: "Start after create", options: []string{"yes", "no"}, selIdx: 0},
-		fldStartAtBoot: {label: "Start at boot", options: []string{"no", "yes"}, selIdx: 0},
-		fldOverwrite:   {label: "Overwrite if exists", options: []string{"no", "yes"}, selIdx: 0},
+		fldStart:        {label: "Start after create", options: []string{"yes", "no"}, selIdx: 0},
+		fldStartAtBoot:  {label: "Start at boot", options: []string{"no", "yes"}, selIdx: 0},
+		fldOverwrite:    {label: "Overwrite if exists", options: []string{"no", "yes"}, selIdx: 0},
 	}
 }
 
@@ -566,7 +566,7 @@ func (m VMLaunchModel) fetchTemplatesCmd(node models.Node) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		client, err := managergrpc.NewClient(node.Address, node.APIKey)
+		client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 		if err != nil {
 			return vmLoadedTemplatesMsg{err: err}
 		}
@@ -605,7 +605,7 @@ func (m VMLaunchModel) launchVMCmd(templateID, newVMID int32, name, hostname str
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		client, err := managergrpc.NewClient(node.Address, node.APIKey)
+		client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 		if err != nil {
 			return vmLaunchResultMsg{err: err}
 		}

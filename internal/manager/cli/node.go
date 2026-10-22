@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -71,6 +72,7 @@ func newNodeAddCmd() *cobra.Command {
 			tok, _ := cmd.Flags().GetString("token")
 			displayName, _ := cmd.Flags().GetString("display-name")
 
+			pin, _ := cmd.Flags().GetString("tls-fingerprint")
 			var name, address, apiKey string
 			if tok != "" {
 				info, err := token.Decode(tok)
@@ -80,6 +82,7 @@ func newNodeAddCmd() *cobra.Command {
 				name = info.Name
 				address = info.Address
 				apiKey = info.APIKey
+				pin = info.TLSFingerprint
 			} else if len(args) >= 2 {
 				name = args[0]
 				address = args[1]
@@ -95,7 +98,7 @@ func newNodeAddCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			client, err := managergrpc.NewClient(address, apiKey)
+			client, err := managergrpc.NewClient(address, apiKey, pin)
 			if err != nil {
 				return fmt.Errorf("connect failed: %w", err)
 			}
@@ -106,7 +109,7 @@ func newNodeAddCmd() *cobra.Command {
 				return fmt.Errorf("health check failed: %w", err)
 			}
 
-			if _, err := db.CreateNode(name, displayName, address, apiKey); err != nil {
+			if _, err := db.CreateNode(name, displayName, address, apiKey, pin); err != nil {
 				return err
 			}
 
@@ -121,6 +124,7 @@ func newNodeAddCmd() *cobra.Command {
 	}
 	cmd.Flags().String("token", "", "Connection token from 'pvectgen minion connect'")
 	cmd.Flags().String("display-name", "", "Friendly display name for this node")
+	cmd.Flags().String("tls-fingerprint", "", "SHA-256 server certificate fingerprint (otherwise use system CAs)")
 	cmd.Flags().String("api-key", "", "API key (for manual add)")
 	return cmd
 }
@@ -163,36 +167,37 @@ func newNodeHealthCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("node %q not found", args[0])
 				}
-				checkHealth(node.Label(), node.Address, node.APIKey)
+				return checkHealth(node.Label(), node.Address, node.APIKey, node.TLSFingerprint)
 			} else {
 				nodes, err := db.ListNodes()
 				if err != nil {
 					return err
 				}
+				var failures []error
 				for _, n := range nodes {
-					checkHealth(n.Label(), n.Address, n.APIKey)
+					failures = append(failures, checkHealth(n.Label(), n.Address, n.APIKey, n.TLSFingerprint))
 				}
+				return errors.Join(failures...)
 			}
-			return nil
 		},
 	}
 }
 
-func checkHealth(label, address, apiKey string) {
+func checkHealth(label, address, apiKey, pin string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := managergrpc.NewClient(address, apiKey)
+	client, err := managergrpc.NewClient(address, apiKey, pin)
 	if err != nil {
 		fmt.Printf("%-20s UNREACHABLE (%v)\n", label, err)
-		return
+		return err
 	}
 	defer client.Close()
 
 	resp, err := client.Health(ctx)
 	if err != nil {
 		fmt.Printf("%-20s ERROR (%v)\n", label, err)
-		return
+		return err
 	}
 
 	status := "HEALTHY"
@@ -200,4 +205,8 @@ func checkHealth(label, address, apiKey string) {
 		status = "UNHEALTHY"
 	}
 	fmt.Printf("%-20s %s  %s  storage: %v\n", label, status, resp.ProxmoxVersion, resp.AvailableStorage)
+	if !resp.Healthy {
+		return fmt.Errorf("%s unhealthy", label)
+	}
+	return nil
 }

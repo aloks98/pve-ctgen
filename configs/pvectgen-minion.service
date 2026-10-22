@@ -10,6 +10,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 User=root
+UMask=0077
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

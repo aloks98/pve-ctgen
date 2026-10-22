@@ -63,10 +63,6 @@ func newFleetApplyCmd() *cobra.Command {
 			}
 
 			printPlan(spec.Name, order, byNode)
-			if dryRun {
-				fmt.Println("\n(dry run — no VMs created)")
-				return nil
-			}
 
 			// Pre-flight: every referenced node must exist in the store.
 			nodes := map[string]*models.Node{}
@@ -76,6 +72,15 @@ func newFleetApplyCmd() *cobra.Command {
 					return fmt.Errorf("fleet references unknown node %q (add it with `manager node add`): %w", nn, err)
 				}
 				nodes[nn] = n
+			}
+			if dryRun {
+				for _, nn := range order {
+					if err := preflightFleet(cmd.Context(), nodes[nn], byNode[nn]); err != nil {
+						return err
+					}
+				}
+				fmt.Println("\nDry run: node checks passed; no VMs created")
+				return nil
 			}
 			fmt.Println()
 
@@ -175,7 +180,7 @@ func resolveTemplate(tmpls []nodeTemplate, want string) (nodeTemplate, error) {
 func launchNodeItems(node *models.Node, items []fleet.PlannedVM) []fleetResult {
 	out := make([]fleetResult, 0, len(items))
 
-	client, err := managergrpc.NewClient(node.Address, node.APIKey)
+	client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 	if err != nil {
 		for _, p := range items {
 			out = append(out, fleetResult{vm: p, status: "failed", msg: fmt.Sprintf("connect: %v", err)})
@@ -260,4 +265,38 @@ func printPlan(name string, order []string, byNode map[string][]fleet.PlannedVM)
 			fmt.Printf("  VM %-5d %-22s %-36s %-10s %-14s [%s]%s\n", p.VMID, p.Name, p.IP, size, p.Template, p.Role, ow)
 		}
 	}
+}
+
+func preflightFleet(ctx context.Context, node *models.Node, items []fleet.PlannedVM) error {
+	client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	resp, err := client.ListTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	var templates []nodeTemplate
+	for _, t := range resp.Templates {
+		templates = append(templates, nodeTemplate{name: t.Name, id: t.VmId, tags: t.Tags})
+	}
+	for _, p := range items {
+		source, err := resolveTemplate(templates, p.Template)
+		if err != nil {
+			return err
+		}
+		checks, err := client.Preflight(ctx, &pb.PreflightRequest{Launch: &pb.LaunchVMRequest{TemplateId: source.id, NewVmId: p.VMID, Name: p.Name, Hostname: p.Hostname, IpConfig: p.IP, Memory: p.Memory, Cores: p.Cores, Nameserver: p.Nameserver, SearchDomain: p.SearchDomain, Overwrite: p.Overwrite}})
+		if err != nil {
+			return err
+		}
+		for _, check := range checks.Checks {
+			if !check.Ok {
+				return fmt.Errorf("%s VM %d: %s: %s", node.Name, p.VMID, check.Name, check.Message)
+			}
+		}
+	}
+	return nil
 }

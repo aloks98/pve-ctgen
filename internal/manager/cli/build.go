@@ -1,15 +1,11 @@
 package cli
 
 import (
-	"context"
+	"errors"
 	"fmt"
-	"io"
-	"os"
 
-	"github.com/google/uuid"
-
+	"github.com/aloks98/pve-ctgen/internal/manager/buildrun"
 	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
-	"github.com/aloks98/pve-ctgen/internal/manager/initresolve"
 	"github.com/aloks98/pve-ctgen/internal/shared/models"
 	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
 	"github.com/spf13/cobra"
@@ -24,6 +20,7 @@ func newBuildCmd() *cobra.Command {
 	cmd.AddCommand(
 		newBuildRunCmd(),
 		newBuildCancelCmd(),
+		newBuildWatchCmd(),
 	)
 
 	return cmd
@@ -72,108 +69,27 @@ func newBuildRunCmd() *cobra.Command {
 				return fmt.Errorf("no templates selected")
 			}
 
-			// Build steps
-			steps, err := db.ListBuildSteps()
+			client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 			if err != nil {
 				return err
 			}
-			var pbSteps []*pb.BuildStep
-			for _, s := range steps {
-				pbSteps = append(pbSteps, &pb.BuildStep{Name: s.Name, Command: s.Command})
-			}
-
-			client, err := managergrpc.NewClient(node.Address, node.APIKey)
-			if err != nil {
-				return fmt.Errorf("connect to %s: %w", node.Name, err)
-			}
 			defer client.Close()
-
-			for _, t := range templates {
-				buildID := uuid.New().String()
-				initType := t.EffectiveInitType()
-				ciContent, ciFilename, err := initresolve.Resolve(db, t)
+			var failures []error
+			for _, tmpl := range templates {
+				err := buildrun.Run(cmd.Context(), db, client, tmpl, node.Name, map[string]string{"overwrite": cmd.Flag("overwrite").Value.String(), "profile": cmd.Flag("profile").Value.String()}, printBuildEvent)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Init config for %s: %v\n", t.Name, err)
-					continue
-				}
-
-				if _, err := db.CreateBuild(buildID, t.Name, node.Name); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to record build for %s: %v\n", t.Name, err)
-					continue
-				}
-
-				fmt.Printf("Building %s (%s, build: %s)...\n", t.Name, initType, buildID[:8])
-
-				req := &pb.BuildRequest{
-					BuildId: buildID,
-					Image: &pb.Image{
-						Id:          int32(t.VMID),
-						Name:        t.Name,
-						Url:         t.URL,
-						ChecksumUrl: t.ChecksumURL,
-						Tags:        t.Tags,
-						Vendor:      ciFilename,
-					},
-					Steps:             pbSteps,
-					CloudinitContent:  ciContent,
-					CloudinitFilename: ciFilename,
-					InitType:          initType,
-				}
-
-				stream, err := client.Build(context.Background(), req)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Build RPC failed for %s: %v\n", t.Name, err)
-					db.UpdateBuildStatus(buildID, "failed")
-					continue
-				}
-
-				var buildFailed bool
-				for {
-					event, err := stream.Recv()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Stream error: %v\n", err)
-						buildFailed = true
-						break
-					}
-
-					switch event.Type {
-					case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_STARTED:
-						db.CreateBuildStepResult(buildID, event.StepName, int(event.StepIndex))
-						fmt.Printf("  [%s] started\n", event.StepName)
-					case pb.BuildEventType_BUILD_EVENT_TYPE_LOG:
-						db.AppendBuildStepLog(buildID, event.StepName, event.Message)
-					case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_COMPLETED:
-						db.UpdateBuildStepResult(buildID, event.StepName, "completed", "")
-						fmt.Printf("  [%s] completed\n", event.StepName)
-					case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_FAILED:
-						db.UpdateBuildStepResult(buildID, event.StepName, "failed", event.Message)
-						fmt.Printf("  [%s] FAILED: %s\n", event.StepName, event.Message)
-					case pb.BuildEventType_BUILD_EVENT_TYPE_DOWNLOAD_PROGRESS:
-						fmt.Printf("\r  Downloading: %.0f%%", event.Progress*100)
-					case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_COMPLETED:
-						fmt.Printf("\n  Build completed!\n")
-					case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED:
-						fmt.Printf("\n  Build FAILED: %s\n", event.Message)
-						buildFailed = true
-					}
-				}
-
-				if buildFailed {
-					db.UpdateBuildStatus(buildID, "failed")
-				} else {
-					db.UpdateBuildStatus(buildID, "completed")
+					failures = append(failures, fmt.Errorf("%s: %w", tmpl.Name, err))
 				}
 			}
+			return errors.Join(failures...)
 
-			return nil
 		},
 	}
 	cmd.Flags().StringSlice("template", nil, "Template names to build")
 	cmd.Flags().String("node", "", "Target node name")
 	cmd.Flags().Bool("all", false, "Build all templates")
+	cmd.Flags().String("profile", "", "Override the template/node build profile")
+	cmd.Flags().Bool("overwrite", false, "Replace an existing template (never a regular VM)")
 	return cmd
 }
 
@@ -189,11 +105,75 @@ func newBuildCancelCmd() *cobra.Command {
 			}
 			defer db.Close()
 
-			if err := db.UpdateBuildStatus(args[0], "cancelled"); err != nil {
+			b, err := db.GetBuild(args[0])
+			if err != nil {
 				return err
 			}
-			fmt.Printf("Cancelled build %s\n", args[0])
+			node, err := db.GetNode(b.Node)
+			if err != nil {
+				return err
+			}
+			client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+			resp, err := client.CancelBuild(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Println(resp.Message)
 			return nil
+
 		},
 	}
+}
+
+func printBuildEvent(e *pb.BuildEvent) {
+	message := e.Message
+	switch e.Type {
+	case pb.BuildEventType_BUILD_EVENT_TYPE_DOWNLOAD_PROGRESS:
+		return
+	case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_STARTED:
+		message = "started"
+	case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_COMPLETED:
+		message = "completed"
+	case pb.BuildEventType_BUILD_EVENT_TYPE_STEP_FAILED:
+		message = "FAILED: " + message
+	case pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED:
+		message = "BUILD FAILED: " + message
+	}
+	if e.StepName != "" {
+		fmt.Printf("  [%s] %s\n", e.StepName, message)
+	} else {
+		fmt.Println(message)
+	}
+}
+func newBuildWatchCmd() *cobra.Command {
+	return &cobra.Command{Use: "watch [build-id]", Short: "Reconnect and persist remaining build events", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		db, err := openStore()
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		b, err := db.GetBuild(args[0])
+		if err != nil {
+			return err
+		}
+		node, err := db.GetNode(b.Node)
+		if err != nil {
+			return err
+		}
+		client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		// Replay all events; the store cursor makes persistence idempotent and includes terminal status.
+		stream, err := client.WatchBuild(cmd.Context(), &pb.WatchBuildRequest{BuildId: b.BuildID})
+		if err != nil {
+			return err
+		}
+		return buildrun.Consume(db, b.BuildID, stream, printBuildEvent)
+	}}
 }
