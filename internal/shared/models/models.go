@@ -125,6 +125,7 @@ type BuildStepResult struct {
 
 // BuildProfile describes node resources and optional site-specific guest settings.
 type BuildProfile struct {
+	InstallDocker     bool     `yaml:"install_docker"`
 	Storage           string   `yaml:"storage"`
 	SnippetStorage    string   `yaml:"snippet_storage"`
 	SnippetsPath      string   `yaml:"snippets_path"`

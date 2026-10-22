@@ -68,3 +68,39 @@ func TestIgnitionKeysMergeAndExplicitRevocation(t *testing.T) {
 		t.Fatalf("revocation failed: %s", out)
 	}
 }
+
+func TestDockerOptIn(t *testing.T) {
+	source := []byte("#cloud-config\nwrite_files:\n  - path: /usr/local/sbin/pvectgen-install-docker\n    permissions: '0755'\n    content: '#!/bin/sh'\nruncmd:\n  - [echo, ready]\n")
+	for _, enabled := range []bool{false, true} {
+		profile := models.BuildProfile{InstallDocker: enabled}
+		out, err := ApplyProfile(source, "cloudinit", profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Applying a profile twice must not schedule duplicate installations.
+		out, err = ApplyProfile(out, "cloudinit", profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg struct {
+			Commands []interface{} `yaml:"runcmd"`
+		}
+		if err := yaml.Unmarshal(out, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if enabled {
+			want = 2
+		}
+		if len(cfg.Commands) != want {
+			t.Fatalf("unexpected commands: %s", out)
+		}
+	}
+	for _, test := range []struct{ source, kind string }{
+		{"{}", "cloudinit"}, {"{}", "ignition"},
+	} {
+		if _, err := ApplyProfile([]byte(test.source), test.kind, models.BuildProfile{InstallDocker: true}); err == nil {
+			t.Fatalf("accepted unsupported Docker setup: %s", test.kind)
+		}
+	}
+}

@@ -18,6 +18,9 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 	}
 	var cfg map[string]interface{}
 	if initType == "ignition" {
+		if p.InstallDocker {
+			return nil, fmt.Errorf("install_docker requires cloud-init; Flatcar uses containerd")
+		}
 		if err := json.Unmarshal(content, &cfg); err != nil {
 			return nil, err
 		}
@@ -68,6 +71,29 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 		}
 		apt["proxy"] = p.AptProxy
 		cfg["apt"] = apt
+	}
+	if p.InstallDocker {
+		const installer = "/usr/local/sbin/pvectgen-install-docker"
+		files, _ := cfg["write_files"].([]interface{})
+		found := false
+		for _, file := range files {
+			if f, ok := file.(map[string]interface{}); ok && f["path"] == installer {
+				found = true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("install_docker requires %s in cloud-init write_files", installer)
+		}
+		commands, _ := cfg["runcmd"].([]interface{})
+		alreadyScheduled := false
+		for _, command := range commands {
+			if command == installer {
+				alreadyScheduled = true
+			}
+		}
+		if !alreadyScheduled {
+			cfg["runcmd"] = append(commands, installer)
+		}
 	}
 	data, err := yaml.Marshal(cfg)
 	return append([]byte("#cloud-config\n"), data...), err

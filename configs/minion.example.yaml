@@ -42,6 +42,8 @@ profiles:
     # Use replace to revoke bundled keys; otherwise keys are merged and deduplicated.
     ssh_keys_mode: merge
     ssh_authorized_keys: []
+    # Cloud-init guests only; Flatcar keeps its native containerd runtime.
+    install_docker: false
     timezone: UTC
     # Optional, for Debian/Ubuntu guests only:
     apt_proxy: ""

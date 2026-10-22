@@ -23,7 +23,7 @@ users:
   - name: admin
     lock_passwd: true
     gecos: Administrator
-    groups: wheel, docker
+    groups: wheel
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /usr/bin/fish
     ssh_authorized_keys:
@@ -34,9 +34,6 @@ users:
 
 ssh_pwauth: false
 disable_root: false
-
-groups:
-  - docker
 
 # Packages
 packages:
@@ -61,6 +58,18 @@ packages:
 
 # Files
 write_files:
+  # Run only when the selected node profile sets install_docker: true.
+  - path: /usr/local/sbin/pvectgen-install-docker
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      dnf config-manager addrepo --from-repofile https://download.docker.com/linux/fedora/docker-ce.repo
+      dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      systemctl enable --now docker
+      usermod -aG docker root
+      usermod -aG docker admin
+
   - path: /etc/fish/conf.d/custom.fish
     permissions: "0644"
     content: |
@@ -149,13 +158,9 @@ write_files:
 
 # Commands
 runcmd:
+  - set -eu
   - chsh -s /usr/bin/fish root
   - localectl set-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-  - dnf config-manager addrepo --from-repofile https://download.docker.com/linux/fedora/docker-ce.repo
-  - dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  - systemctl enable --now docker
-  - usermod -aG docker root
-  - usermod -aG docker admin
   - systemctl enable --now qemu-guest-agent || true
   - chown -R admin:admin /home/admin
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config

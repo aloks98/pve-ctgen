@@ -23,7 +23,7 @@ users:
   - name: admin
     lock_passwd: true
     gecos: Administrator
-    groups: wheel, docker
+    groups: wheel
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /usr/bin/fish
     ssh_authorized_keys:
@@ -35,9 +35,6 @@ users:
 ssh_pwauth: false
 disable_root: false
 
-groups:
-  - docker
-
 # Packages
 packages:
   - qemu-guest-agent
@@ -46,6 +43,18 @@ packages:
 
 # Files
 write_files:
+  # Run only when the selected node profile sets install_docker: true.
+  - path: /usr/local/sbin/pvectgen-install-docker
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      systemctl enable --now docker
+      usermod -aG docker root
+      usermod -aG docker admin
+
   # EPEL packages must be installed after CRB and EPEL are enabled.
   - path: /usr/local/sbin/pvectgen-setup-el
     permissions: "0755"
@@ -150,11 +159,6 @@ runcmd:
   - /usr/local/sbin/pvectgen-setup-el
   - chsh -s /usr/bin/fish root
   - localectl set-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-  - dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-  - dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  - systemctl enable --now docker
-  - usermod -aG docker root
-  - usermod -aG docker admin
   - systemctl enable --now qemu-guest-agent || true
   - chown -R admin:admin /home/admin
   - sed -i 's/^#\?PrintMotd.*/PrintMotd yes/' /etc/ssh/sshd_config
