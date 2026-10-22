@@ -21,6 +21,15 @@ passwd:
 
 storage:
   files:
+    # Verified by Ignition before the guest reaches systemd. Digest from the
+    # upstream kubernetes-v1.35.5 release SHA256SUMS; update both together.
+    - path: /opt/extensions/kubernetes/kubernetes-v1.35.5-x86-64.raw
+      mode: 0644
+      contents:
+        source: https://extensions.flatcar.org/extensions/kubernetes-v1.35.5-x86-64.raw
+        verification:
+          hash: sha256-883e6337897ff987db650d47113c1d3b5fe142819a4f0d36e8ea5ceb764fbe22
+
     - path: /etc/ssh/sshd_config.d/00-pvectgen-access.conf
       mode: 0644
       contents:
@@ -65,41 +74,5 @@ systemd:
     - name: systemd-sysext.service
       enabled: true
 
-    # Download kubernetes sysext images on first boot
-    - name: download-kubernetes-sysext.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Download Kubernetes systemd-sysext image
-        ConditionPathExists=!/opt/extensions/kubernetes/kubernetes-v1.35.5-x86-64.raw
-        After=network-online.target
-        Wants=network-online.target
-
-        [Service]
-        Type=oneshot
-        RemainAfterExit=true
-        ExecStartPre=/usr/bin/mkdir -p /opt/extensions/kubernetes
-        ExecStart=/usr/bin/curl -fsSL -o /opt/extensions/kubernetes/kubernetes-v1.35.5-x86-64.raw https://extensions.flatcar.org/extensions/kubernetes-v1.35.5-x86-64.raw
-        ExecStartPost=/usr/bin/systemctl restart systemd-sysext.service
-
-        [Install]
-        WantedBy=multi-user.target
-
-    # Enable kubelet (will be configured later by kubeadm init/join)
-    - name: kubelet.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=kubelet
-        Documentation=https://kubernetes.io/docs/
-        Wants=network-online.target containerd.service
-        After=network-online.target containerd.service
-
-        [Service]
-        ExecStart=/usr/bin/kubelet
-        Restart=always
-        StartLimitInterval=0
-        RestartSec=10
-
-        [Install]
-        WantedBy=multi-user.target
+    # The extension supplies kubelet.service, kubeadm arguments, and the
+    # multi-user.target dependency. Do not override its packaged unit.
