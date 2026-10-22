@@ -2,9 +2,10 @@ BINARY_NAME=pvectgen
 BUILD_DIR=bin
 PROTO_DIR=proto
 INSTALL_DIR=/usr/local/bin
+GOVULNCHECK_VERSION=v1.9.0
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: build build-local install lint test proto clean deploy
+.PHONY: build build-local install lint test vuln proto clean deploy
 
 # Cross-compile for Linux (Proxmox)
 build:
@@ -33,6 +34,9 @@ lint:
 
 test:
 	go test ./...
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 proto:
 	protoc --go_out=. --go_opt=paths=source_relative \

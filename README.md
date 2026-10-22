@@ -228,7 +228,7 @@ Add more via `pvectgen manager template add` or by editing `config/os_list.json`
 
 ### Releases (GitHub Actions)
 
-Create a release through the GitHub UI → CI runs lint + tests → GoReleaser builds binaries for linux/darwin × amd64/arm64 and uploads to the release.
+Create a release through the GitHub UI → CI runs lint, race-enabled tests, and vulnerability scanning → GoReleaser builds binaries for linux/darwin × amd64/arm64 and uploads to the release.
 
 ### Deploy minion via SSH
 
@@ -238,12 +238,15 @@ make deploy NODE=root@192.168.1.100
 
 ## Development
 
+Go 1.27.3 or newer is required. CI reads the Go version from `go.mod`.
+
 ```bash
 make build-local    # Build for current platform
 make build          # Cross-compile for Linux amd64
 make install        # Build + install to /usr/local/bin
 make lint           # go vet
 make test           # go test ./...
+make vuln           # Scan for known reachable vulnerabilities (requires network access)
 make proto          # Regenerate protobuf (requires protoc)
 ```
 

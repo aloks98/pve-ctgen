@@ -13,7 +13,7 @@ This file provides context for Claude and other AI assistants when working on th
 
 | Component | Choice |
 |-----------|--------|
-| Language | Go 1.24+ |
+| Language | Go 1.27.3+ |
 | CLI framework | Cobra |
 | TUI framework | BubbleTea + Lipgloss + Bubbles |
 | Manager-Minion comms | gRPC (server streaming for builds) |
@@ -153,6 +153,7 @@ make build          # Cross-compile for Linux amd64
 make install        # Build + install to /usr/local/bin (with version from git)
 make lint           # go vet
 make test           # go test
+make vuln           # govulncheck (pinned version, requires network access)
 make proto          # Regenerate protobuf
 make deploy NODE=root@ip  # Deploy minion via SSH
 ```
