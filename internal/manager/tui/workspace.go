@@ -22,11 +22,8 @@ var destinations = []struct {
 	{"Overview", ViewHome},
 }
 
-// Keep large terminals readable without stretching short IDs across the screen.
-func (m AppModel) shellWidth() int { return min(156, max(1, m.width-4)) }
-
 func (m AppModel) contentSize() (int, int) {
-	w := m.shellWidth()
+	w := m.width
 	if m.width >= 100 {
 		w -= 24
 	}
@@ -43,7 +40,7 @@ func (m *AppModel) resizeViews() {
 	m.templatesView.SetSize(w, h)
 	m.stepsView.SetSize(w, h)
 	m.buildsView.SetSize(w, h)
-	m.buildSelect.SetSize(min(w, 88), h)
+	m.buildSelect.SetSize(w, h)
 	m.buildProgress.SetSize(w, h)
 	m.vmLaunch.SetSize(w, h)
 	m.nodesView.SetSize(w, h)
@@ -100,7 +97,7 @@ func (m AppModel) workspace(content string) string {
 		return styles.Fit("pve-ctgen\nResize terminal to at least 40 x 12.\nctrl+c quit", m.width, m.height)
 	}
 	w, h := m.contentSize()
-	shell := m.shellWidth()
+	shell := m.width
 	title := styles.BoldStyle.Render("pve-ctgen") + "   " + styles.DimStyle.Render("workspace / ") + styles.AccentStyle.Render(strings.TrimPrefix(m.breadcrumb(), "pvectgen > "))
 	if m.buildProgress.Running() {
 		title += "  " + styles.WarningStyle.Render("[..] build active")
@@ -109,9 +106,6 @@ func (m AppModel) workspace(content string) string {
 		content = m.navigation(h)
 	}
 	body := styles.Fit(content, w, h)
-	if m.currentView == ViewBuildSelect && !(m.navFocused && m.width < 100) && w > 88 {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, strings.Repeat(" ", (w-88)/2), styles.Fit(content, 88, h))
-	}
 	if m.width >= 100 {
 		divider := styles.RuleStyle.Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.navigation(h), " ", divider, "  ", body)
@@ -129,12 +123,5 @@ func (m AppModel) workspace(content string) string {
 	if m.height >= 24 {
 		lines = append(lines, "")
 	}
-	// Center the bounded workspace on very wide terminals; retain a two-cell
-	// margin at ordinary widths. Paint all blank cells, not just text fragments.
-	margin := strings.Repeat(" ", max(0, (m.width-shell)/2))
-	output := strings.Split(strings.Join(lines, "\n"), "\n")
-	for i := range output {
-		output[i] = margin + output[i]
-	}
-	return styles.PaintCanvas(styles.Fit(strings.Join(output, "\n"), m.width, m.height))
+	return styles.PaintCanvas(styles.Fit(strings.Join(lines, "\n"), m.width, m.height))
 }

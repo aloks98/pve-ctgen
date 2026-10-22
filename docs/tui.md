@@ -5,11 +5,12 @@ The initial screen is Templates. At 100 columns or wider, the workspace sidebar
 stays visible. In narrower terminals, Ctrl+G opens the same navigation as a menu.
 80 × 24 is recommended; the compact layout supports at least 40 × 12.
 The workspace uses the artboard's canvas and selection colors, with light/dark
-variants, padded content, and a maximum width of 156 cells for readability.
+variants and uses the full terminal width, including the guided build screens.
 Template details appear in two columns when there is enough vertical space;
 short terminals prioritize the list. Tables distribute spare width across columns.
 
-The exact palette requires true color. If SSH loses the color capability hint,
+Color support is detected automatically; `COLORTERM` is optional. The exact
+palette requires true color. If SSH loses the color capability hint,
 Alacritty users can launch with `COLORTERM=truecolor pvectgen manager tui`.
 When using tmux, its outer terminal must also be configured for RGB color;
 otherwise tmux may reduce the palette to 256 colors.
