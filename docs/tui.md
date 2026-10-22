@@ -13,6 +13,10 @@ The exact palette requires true color. If SSH loses the color capability hint,
 Alacritty users can launch with `COLORTERM=truecolor pvectgen manager tui`.
 When using tmux, its outer terminal must also be configured for RGB color;
 otherwise tmux may reduce the palette to 256 colors.
+`COLORTERM` is only a terminal capability hint; it does not select a manager
+configuration or load templates. An empty store can be populated with
+`pvectgen manager import` (using the same `--config`, if supplied to the TUI),
+or definitions can be added with `a`. Import skips existing entries by default.
 
 ## Command+G on a Mac using Alacritty
 

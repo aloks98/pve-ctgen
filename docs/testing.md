@@ -84,3 +84,14 @@ The isolated remote PTY smoke test above was repeated with `--mac-keys`, the
 Ctrl+G byte sent by the Alacritty Command+G mapping, and 200 × 58 resizing.
 All checks passed. The physical Mac keyboard/Alacritty configuration could not be
 exercised from the VM; that binding must be added on the Mac.
+
+A subsequent screenshot exposed nested ANSI resets returning parts of the canvas
+to the terminal's default background. The canvas now restores its default colors
+while preserving explicit selection and log colors. Regression tests interpret
+the ANSI output and check every cell, including padding, in both true-color
+themes and 256-color mode. TUI race tests and vet passed. An isolated local tmux
+session verified explicit backgrounds on all 11,600 cells of a 200 × 58 screen
+and Ctrl+G navigation. The earlier HTML preview used the canvas color as its own
+background, which masked this bug; cell-level terminal checks are necessary.
+The isolated remote PTY smoke test on `192.168.100.1` also passed again with this
+fix; its temporary binary, minion and scratch store were removed afterward.

@@ -54,6 +54,7 @@ func NewTemplatesModel(db *store.DB) TemplatesModel {
 		[]string{"NAME", "VMID", "INIT", "PROFILE"},
 		[]int{28, 8, 12, 15},
 	)
+	t.EmptyMessage = "  No templates yet. Press a to add, or run: pvectgen manager import"
 	search := textinput.New()
 	search.Placeholder = "Filter templates"
 	search.CharLimit = 100

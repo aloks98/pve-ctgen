@@ -136,5 +136,5 @@ func (m AppModel) workspace(content string) string {
 	for i := range output {
 		output[i] = margin + output[i]
 	}
-	return styles.CanvasStyle.Render(styles.Fit(strings.Join(output, "\n"), m.width, m.height))
+	return styles.PaintCanvas(styles.Fit(strings.Join(output, "\n"), m.width, m.height))
 }
