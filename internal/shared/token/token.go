@@ -11,9 +11,10 @@ const tokenPrefix = "pvectgen-token://"
 
 // ConnectionInfo holds the minion connection details encoded in a token.
 type ConnectionInfo struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
-	APIKey  string `json:"api_key"`
+	Name           string `json:"name"`
+	Address        string `json:"address"`
+	APIKey         string `json:"api_key"`
+	TLSFingerprint string `json:"tls_fingerprint,omitempty"`
 }
 
 // Encode creates a connection token from the given connection info.
