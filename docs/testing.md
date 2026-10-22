@@ -113,3 +113,52 @@ Live tests used isolated linked clones on Tokyo, IDs `998200`–`998207`, with p
 Tokyo's ten existing saved guest snippets received a separate SSH-only update: the retired `aloksahoo@mac` key was removed, Titan Air/Fatman were added, and root key login was enabled. Existing `aloks98` users, node keys (`root@tokyo`, `root@kyoto`, `root@osaka`), MOTDs, packages, commands, proxy settings, and per-VM hostnames were preserved. Cloud-init/Ignition schemas were checked and uploaded hashes verified. Original snippets are backed up under `/root/pvectgen-snippet-backup-20261023-021954` on Tokyo. This updates provisioning files, not authorized keys inside existing running VMs. Broader provisioning changes live in the project defaults and require a new build/import to replace legacy snippets.
 
 All eight test clones and their disks, temporary snippet storage, and remote staging files were removed. Production guest IDs `400, 401, 402, 403, 406` remained running and the production minion remained active. The snippet backup is intentionally retained.
+
+## Existing guest SSH access rollout, 2026-10-23
+
+The live guest accounts were subsequently updated through Proxmox guest-agent
+execution and `pct exec`. The final inventory contains 17 running VMs and two
+running containers across four independent hosts:
+
+| Host | Address | VMs updated | Containers updated |
+| --- | --- | --- | --- |
+| Tokyo | `192.168.100.1` | 400, 401, 402, 403 | 405 (wireguard-2) |
+| Osaka | `192.168.100.2` | 301, 302 | — |
+| Kyoto | `192.168.100.3` | 100, 101, 200, 201 | 102 (apt-cache) |
+| Rack-1 | `192.168.100.5` | 100, 101–105, 1000 (Fatman) | — |
+
+Each guest's root account and existing `core` or `aloks98` account received the
+Titan Air and Fatman public keys from `config/guest-ssh-keys.pub`. The retired
+`aloksahoo@mac` key was removed by key material, including the same key labeled
+`aloksahoo@acceldata.io` in the containers. All other existing key fingerprints
+were preserved, including the node RSA keys and the distinct additional
+`root@tokyo` key on wireguard-2.
+
+Root SSH uses `PermitRootLogin prohibit-password` and public-key authentication.
+Flatcar keys were installed in persistent `authorized_keys.d` fragments and the
+active files regenerated with `update-ssh-keys`. Both new keys were installed
+before independent SSH checks; the retired key was removed only after those
+checks succeeded. Original authorization files and any previous policy drop-in
+are retained under `/var/lib/pvectgen/ssh-access-backup-20261023` on each remaining
+guest, accessible only to root. These backups contain the retired authorization
+entries, so restoring them would restore that access.
+
+Final verification passed for all 36 root/normal-user SSH sessions using Fatman's
+key. Per-account fingerprint sets matched the originals minus the retired key
+plus the two approved keys; active files, Flatcar fragments, effective root SSH
+policy, and Flatcar's additional userdb key source were inspected. Titan Air's
+public key was verified in every account; authentication from the Mac was not
+tested. Boot IDs were unchanged between the installation and final login checks.
+MOTDs and application configuration were preserved; no guest reboot was requested.
+
+Two operational issues were resolved during verification. Newt-1 had a stale
+known-host record; its public host key was checked through the trusted guest-agent
+channel before updating the temporary verification record. Apt-cache's SSH daemon
+failed to bind after a reload; its active SSH socket started a fresh daemon on
+the next connection, and subsequent root login and policy checks passed.
+
+At the user's subsequent request, Tokyo's `newt-1` VM 406 (`192.168.150.57`) was
+shut down and destroyed with its three owned volumes (system, EFI, and cloud-init).
+Its configuration and local-lvm volumes were confirmed absent. It had received
+the key update before deletion and is excluded from the final counts above.
+Hypervisor access keys and template disks were not changed in this rollout.
