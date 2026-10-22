@@ -15,6 +15,11 @@ users:
   - name: root
     lock_passwd: true
     shell: /usr/bin/fish
+    ssh_authorized_keys:
+      # BEGIN MANAGED SSH KEYS
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPuoDofo5+qGtLAHzvsvjZKdK6N+kmi4qI3JSwOqTt2p aloks98@titanair.local
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbY4fAHtL2YnQji5aqrjpTCcmC9b0s0BtJebPjAEVIJ aloks98@fatman
+      # END MANAGED SSH KEYS
   - name: admin
     lock_passwd: true
     gecos: Administrator
@@ -22,11 +27,13 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /usr/bin/fish
     ssh_authorized_keys:
+      # BEGIN MANAGED SSH KEYS
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPuoDofo5+qGtLAHzvsvjZKdK6N+kmi4qI3JSwOqTt2p aloks98@titanair.local
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbY4fAHtL2YnQji5aqrjpTCcmC9b0s0BtJebPjAEVIJ aloks98@fatman
+      # END MANAGED SSH KEYS
 
 ssh_pwauth: false
-disable_root: true
+disable_root: false
 
 groups:
   - docker
@@ -116,11 +123,11 @@ write_files:
       fi
       printf '\033[0m'
 
-  - path: /etc/ssh/sshd_config.d/hardening.conf
+  - path: /etc/ssh/sshd_config.d/00-pvectgen-access.conf
     permissions: "0644"
     content: |
       PasswordAuthentication no
-      ChallengeResponseAuthentication no
+      KbdInteractiveAuthentication no
       PubkeyAuthentication yes
       PermitRootLogin prohibit-password
       MaxAuthTries 3

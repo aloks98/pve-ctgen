@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"github.com/aloks98/pve-ctgen/internal/shared/models"
 	"gopkg.in/yaml.v3"
+	"strings"
 )
 
 // ApplyProfile adds explicit node/site settings without embedding them in defaults.
 func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byte, error) {
+	if p.SSHKeysMode != "" && p.SSHKeysMode != "merge" && p.SSHKeysMode != "replace" {
+		return nil, fmt.Errorf("ssh_keys_mode must be merge or replace")
+	}
 	if len(content) == 0 {
 		return content, nil
 	}
@@ -17,7 +21,7 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 		if err := json.Unmarshal(content, &cfg); err != nil {
 			return nil, err
 		}
-		if len(p.SSHAuthorizedKeys) > 0 {
+		if len(p.SSHAuthorizedKeys) > 0 || p.SSHKeysMode == "replace" {
 			passwd, _ := cfg["passwd"].(map[string]interface{})
 			if passwd == nil {
 				passwd = map[string]interface{}{}
@@ -26,9 +30,9 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 			users, _ := passwd["users"].([]interface{})
 			found := false
 			for _, u := range users {
-				if user, ok := u.(map[string]interface{}); ok && user["name"] == "core" {
-					user["sshAuthorizedKeys"] = p.SSHAuthorizedKeys
-					found = true
+				if user, ok := u.(map[string]interface{}); ok && (user["name"] == "core" || user["name"] == "root") {
+					setUserKeys(user, "sshAuthorizedKeys", p)
+					found = found || user["name"] == "core"
 				}
 			}
 			if !found {
@@ -41,13 +45,13 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 	if err := yaml.Unmarshal(content, &cfg); err != nil {
 		return nil, err
 	}
-	if len(p.SSHAuthorizedKeys) > 0 {
+	if len(p.SSHAuthorizedKeys) > 0 || p.SSHKeysMode == "replace" {
 		users, _ := cfg["users"].([]interface{})
 		found := false
 		for _, u := range users {
-			if user, ok := u.(map[string]interface{}); ok && user["name"] == "admin" {
-				user["ssh_authorized_keys"] = p.SSHAuthorizedKeys
-				found = true
+			if user, ok := u.(map[string]interface{}); ok && (user["name"] == "admin" || (user["name"] == "root" && cfg["disable_root"] == false)) {
+				setUserKeys(user, "ssh_authorized_keys", p)
+				found = found || user["name"] == "admin"
 			}
 		}
 		if !found {
@@ -67,4 +71,38 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 	}
 	data, err := yaml.Marshal(cfg)
 	return append([]byte("#cloud-config\n"), data...), err
+}
+
+// Preserve existing access unless replacement is explicitly requested. Comments
+// do not identify keys: deduplicate by key type and public key payload.
+func setUserKeys(user map[string]interface{}, field string, p models.BuildProfile) {
+	var keys []string
+	if p.SSHKeysMode != "replace" {
+		if existing, ok := user[field].([]interface{}); ok {
+			for _, key := range existing {
+				if value, ok := key.(string); ok {
+					keys = append(keys, value)
+				}
+			}
+		}
+	}
+	keys = append(keys, p.SSHAuthorizedKeys...)
+	unique := make([]string, 0, len(keys))
+	seen := map[string]bool{}
+	for _, key := range keys {
+		parts := strings.Fields(key)
+		identity := key
+		if len(parts) >= 2 {
+			identity = parts[0] + " " + parts[1]
+		}
+		if !seen[identity] {
+			unique = append(unique, key)
+			seen[identity] = true
+		}
+	}
+	if len(unique) == 0 {
+		delete(user, field)
+	} else {
+		user[field] = unique
+	}
 }

@@ -37,8 +37,10 @@ profiles:
     bridge: vmbr0
     disk_size: 32G
     disk_format: raw
-    # Add your public keys here; defaults ship with locked passwords and no keys.
-    # Keys go to admin for cloud-init and core for Ignition.
+    # Additional guest public keys. Bundled configs already include Titan Air/Fatman.
+    # Root receives keys only where the init config explicitly enables root access.
+    # Use replace to revoke bundled keys; otherwise keys are merged and deduplicated.
+    ssh_keys_mode: merge
     ssh_authorized_keys: []
     timezone: UTC
     # Optional, for Debian/Ubuntu guests only:

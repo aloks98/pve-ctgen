@@ -67,6 +67,9 @@ func (c *Config) Profile(name string) (models.BuildProfile, error) {
 			return p, fmt.Errorf("timezone: %w", err)
 		}
 	}
+	if p.SSHKeysMode != "" && p.SSHKeysMode != "merge" && p.SSHKeysMode != "replace" {
+		return p, fmt.Errorf("ssh_keys_mode must be merge or replace")
+	}
 	for _, key := range p.SSHAuthorizedKeys {
 		parts := strings.Fields(key)
 		if len(parts) < 2 || strings.ContainsAny(key, "\r\n") || (!strings.HasPrefix(parts[0], "ssh-") && !strings.HasPrefix(parts[0], "ecdsa-")) {

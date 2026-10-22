@@ -5,7 +5,10 @@ INSTALL_DIR=/usr/local/bin
 GOVULNCHECK_VERSION=v1.9.0
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-.PHONY: build build-local install lint test vuln proto clean deploy
+.PHONY: build build-local install lint test vuln proto clean deploy guest-keys
+
+guest-keys:
+	python3 scripts/sync-guest-keys.py
 
 # Cross-compile for Linux (Proxmox)
 build:
@@ -33,6 +36,7 @@ lint:
 	go vet ./...
 
 test:
+	python3 scripts/sync-guest-keys.py --check
 	go test ./...
 
 vuln:

@@ -132,6 +132,7 @@ type BuildProfile struct {
 	DiskSize          string   `yaml:"disk_size"`
 	DiskFormat        string   `yaml:"disk_format"`
 	SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys"`
+	SSHKeysMode       string   `yaml:"ssh_keys_mode"` // merge (default) or replace
 	Timezone          string   `yaml:"timezone"`
 	AptProxy          string   `yaml:"apt_proxy"`
 }
