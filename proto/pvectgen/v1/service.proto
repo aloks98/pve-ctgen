@@ -6,6 +6,10 @@ option go_package = "github.com/aloks98/pve-ctgen/proto/pvectgen/v1;pvectgenv1";
 
 service MinionService {
   rpc Build(BuildRequest) returns (stream BuildEvent);
+  rpc WatchBuild(WatchBuildRequest) returns (stream BuildEvent);
+  rpc CancelBuild(CancelBuildRequest) returns (CancelBuildResponse);
+  rpc Preflight(PreflightRequest) returns (PreflightResponse);
+  rpc ListVMs(ListTemplatesRequest) returns (ListTemplatesResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc LaunchVM(LaunchVMRequest) returns (LaunchVMResponse);
   rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse);
@@ -45,6 +49,7 @@ message BuildEvent {
   string message = 4;
   int32 step_index = 5;
   double progress = 6;
+  int64 sequence = 7;
 }
 
 enum BuildEventType {
@@ -84,6 +89,7 @@ message LaunchVMRequest {
   string init_type = 12;
   // overwrite: if true and new_vm_id already exists, destroy it first.
   bool overwrite = 13;
+  string profile = 14;
 }
 
 message LaunchVMResponse {
@@ -103,3 +109,10 @@ message TemplateInfo {
 message ListTemplatesResponse {
   repeated TemplateInfo templates = 1;
 }
+
+message WatchBuildRequest { string build_id = 1; int64 after_sequence = 2; }
+message CancelBuildRequest { string build_id = 1; }
+message CancelBuildResponse { bool cancelled = 1; string message = 2; }
+message PreflightRequest { string profile = 1; BuildRequest build = 2; LaunchVMRequest launch = 3; }
+message CheckResult { string name = 1; bool ok = 2; string message = 3; }
+message PreflightResponse { repeated CheckResult checks = 1; }
