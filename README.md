@@ -73,6 +73,8 @@ pvectgen manager import
 pvectgen manager tui
 ```
 
+See [upgrade and profile configuration](docs/migration.md), [review progress](docs/review-progress.md), and [test results](docs/testing.md). Existing installations need TLS re-enrollment; configure profile SSH keys before building guests.
+
 ## Features
 
 - **Multi-node management** — manage templates across multiple Proxmox nodes from one interface
@@ -84,7 +86,7 @@ pvectgen manager tui
 - **Background builds** — press esc during a build to return to menu, build continues in background
 - **Self-update** — `pvectgen update` downloads and replaces the binary
 - **One-click deploy** — install scripts for both manager and minion
-- **Secure** — API key authentication on all gRPC calls
+- **Secure transport** — TLS 1.3 with certificate pinning and API key authentication
 - **File-based storage** — all data in human-readable YAML files, no database
 
 ## TUI
@@ -129,9 +131,10 @@ pvectgen
 │   ├── template  list|add|show|edit|remove   # VM templates
 │   ├── steps     list|add|edit|remove|reset  # Build steps
 │   ├── node      list|add|remove|health      # Proxmox nodes
-│   ├── build     run|cancel                  # Trigger builds
+│   ├── build     run|watch|cancel                  # Trigger builds
 │   ├── builds    list|show|logs              # Build history
 │   ├── vm        launch|list                 # VM operations
+│   ├── doctor    [--node NAME] [--profile NAME] # Node preflight
 │   └── import    [--force]                   # Import from config files
 ├── minion
 │   ├── serve     [--config path]             # Start gRPC server
@@ -176,6 +179,7 @@ api_key: ""          # Auto-generated on first run
 iso_path: "/var/lib/vz/template/iso"
 snippets_path: "/var/lib/vz/snippets"
 work_dir: "/tmp/pvectgen"
+jobs_dir: "/var/lib/pvectgen/jobs"
 ```
 
 ## Template Variables
@@ -188,7 +192,13 @@ Build step commands support these placeholders:
 | `{{.Name}}` | Template name | `ubuntu2404` |
 | `{{.Tags}}` | Comma-separated tags | `ubuntu,cloudinit` |
 | `{{.Vendor}}` | Cloud-init filename | `ubuntu.yaml` |
-| `{{.FilePath}}` | Working image path | `/tmp/pvectgen/base.qcow2` |
+| `{{.FilePath}}` | Isolated working image path | `/tmp/pvectgen/build-123/base.qcow2` |
+| `{{.Storage}}` | Profile image storage | `local-lvm` |
+| `{{.SnippetStorage}}` | Profile snippet storage | `local` |
+| `{{.Bridge}}` | Profile bridge | `vmbr0` |
+| `{{.DiskSize}}` | Profile disk size | `32G` |
+| `{{.DiskFormat}}` | Imported disk format | `raw` |
+| `{{.ImportedDisk}}` | Proxmox-reported imported volume | `local-lvm:vm-8201-disk-1` |
 
 ## VM Launch Options
 
