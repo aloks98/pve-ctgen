@@ -211,7 +211,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		events := make(chan *pb.BuildEvent, 100)
 		m.buildProgress.Reset(events)
 		m.currentView = ViewBuildProgress
-		go runBuildInBackground(m.store, msg.Templates, msg.Node, events)
+		go runBuildInBackground(m.store, msg.Templates, msg.Node, msg.Requests, events)
 		return m, m.buildProgress.Init()
 
 	case NavigateMsg:
@@ -357,7 +357,7 @@ func (m AppModel) rightStatus() string {
 
 // runBuildInBackground connects to the minion, runs builds, and sends events on the channel.
 // The channel is closed when all builds complete.
-func runBuildInBackground(db *store.DB, templates []models.Template, node models.Node, events chan<- *pb.BuildEvent) {
+func runBuildInBackground(db *store.DB, templates []models.Template, node models.Node, requests []*pb.BuildRequest, events chan<- *pb.BuildEvent) {
 	defer close(events)
 
 	client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
@@ -366,12 +366,18 @@ func runBuildInBackground(db *store.DB, templates []models.Template, node models
 		return
 	}
 	defer client.Close()
-	for _, tmpl := range templates {
+	for i, tmpl := range templates {
 		reportedFailure := false
-		err := buildrun.Run(context.Background(), db, client, tmpl, node.Name, nil, func(e *pb.BuildEvent) {
+		emit := func(e *pb.BuildEvent) {
 			events <- e
 			reportedFailure = e.Type == pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED
-		})
+		}
+		var err error
+		if i < len(requests) {
+			err = buildrun.Start(context.Background(), db, client, requests[i], node.Name, emit)
+		} else {
+			err = buildrun.Run(context.Background(), db, client, tmpl, node.Name, nil, emit)
+		}
 		if err != nil && !reportedFailure {
 			events <- &pb.BuildEvent{Type: pb.BuildEventType_BUILD_EVENT_TYPE_BUILD_FAILED, Message: err.Error()}
 		}

@@ -1,86 +1,106 @@
 package views
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-
+	"github.com/aloks98/pve-ctgen/internal/manager/buildrun"
+	managergrpc "github.com/aloks98/pve-ctgen/internal/manager/grpc"
 	"github.com/aloks98/pve-ctgen/internal/manager/store"
+	"github.com/aloks98/pve-ctgen/internal/manager/tui/components"
 	"github.com/aloks98/pve-ctgen/internal/manager/tui/styles"
 	"github.com/aloks98/pve-ctgen/internal/shared/models"
+	pb "github.com/aloks98/pve-ctgen/proto/pvectgen/v1"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// StartBuildMsg is emitted when the user confirms template + node + VM ID selection.
+// StartBuildMsg contains the immutable request snapshots approved in review.
 type StartBuildMsg struct {
 	Templates []models.Template
 	Node      models.Node
+	Requests  []*pb.BuildRequest
 }
 
 const (
-	phaseTemplates = 0
-	phaseNodes     = 1
-	phaseVMIDs     = 2 // override VM IDs before starting
+	phaseTemplates = iota
+	phaseNodes
+	phaseVMIDs
+	phaseReview
 )
-
-// BuildSelectModel handles template and node selection before a build.
-type BuildSelectModel struct {
-	db           *store.DB
-	templates    []selTemplate
-	nodes        []models.Node
-	selectedNode *models.Node
-	cursor       int
-	phase        int
-	statusMsg    string
-
-	// VM ID override inputs (populated when entering phase 2)
-	vmIDInputs []vmIDOverride
-
-	width  int
-	height int
-}
 
 type selTemplate struct {
 	tmpl     models.Template
 	selected bool
 }
-
-type vmIDOverride struct {
-	templateName string
-	defaultVMID  int
-	input        textinput.Model
+type preflightResultMsg struct {
+	revision uint64
+	checks   []*pb.CheckResult
+	err      error
 }
 
-// NewBuildSelectModel creates a new BuildSelectModel.
+type BuildSelectModel struct {
+	db                           *store.DB
+	templates                    []selTemplate
+	nodes                        []models.Node
+	selectedNode                 *models.Node
+	cursor, phase, width, height int
+	statusMsg                    string
+	form                         components.Form
+	selected                     []models.Template
+	requests                     []*pb.BuildRequest
+	checks                       []*pb.CheckResult
+	checking, ready, submitted   bool
+	revision                     uint64
+	cancel                       context.CancelFunc
+	review                       viewport.Model
+	// The command seam keeps remote checks outside the UI update loop.
+	preflight func(models.Node, []*pb.BuildRequest, uint64, context.Context) tea.Cmd
+}
+
 func NewBuildSelectModel(db *store.DB) BuildSelectModel {
-	return BuildSelectModel{db: db}
+	return BuildSelectModel{db: db, preflight: checkBuilds, review: viewport.New(80, 16)}
 }
-
-// SetSize sets the view dimensions.
 func (m *BuildSelectModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+	m.form.SetSize(w, max(6, h-6))
+	m.review.Width = max(1, w)
+	m.review.Height = max(1, h-6)
+	m.renderReview()
 }
-
-// Refresh reloads data from the store.
 func (m *BuildSelectModel) Refresh() {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.revision++
 	m.phase = phaseTemplates
 	m.cursor = 0
 	m.statusMsg = ""
-	m.vmIDInputs = nil
-
-	templates, _ := m.db.ListTemplates()
-	m.templates = make([]selTemplate, len(templates))
-	for i, t := range templates {
-		m.templates[i] = selTemplate{tmpl: t}
+	m.selectedNode = nil
+	m.selected = nil
+	m.requests = nil
+	m.checks = nil
+	m.checking = false
+	m.ready = false
+	m.submitted = false
+	templates, err := m.db.ListTemplates()
+	if err != nil {
+		m.statusMsg = err.Error()
 	}
-
-	m.nodes, _ = m.db.ListNodes()
+	m.templates = nil
+	for _, t := range templates {
+		m.templates = append(m.templates, selTemplate{tmpl: t})
+	}
+	m.nodes, err = m.db.ListNodes()
+	if err != nil {
+		m.statusMsg = err.Error()
+	}
 }
-
-// SelectTemplate begins a build with the definition chosen in the workspace.
 func (m *BuildSelectModel) SelectTemplate(name string) {
 	m.Refresh()
 	for i := range m.templates {
@@ -91,317 +111,300 @@ func (m *BuildSelectModel) SelectTemplate(name string) {
 		}
 	}
 }
-
-// InSubView returns true so esc/q don't navigate away while in sub-phases.
-func (m *BuildSelectModel) InSubView() bool {
-	return m.phase > phaseTemplates
-}
-
-// Update handles key events.
+func (m *BuildSelectModel) InSubView() bool { return m.phase > phaseTemplates }
 func (m BuildSelectModel) Update(msg tea.Msg) (BuildSelectModel, tea.Cmd) {
-	switch m.phase {
-	case phaseVMIDs:
-		return m.updateVMIDPhase(msg)
+	if result, ok := msg.(preflightResultMsg); ok {
+		if result.revision != m.revision || m.phase != phaseReview {
+			return m, nil
+		}
+		m.checking = false
+		if m.cancel != nil {
+			m.cancel()
+		}
+		m.checks = result.checks
+		m.ready = result.err == nil && len(result.checks) > 0
+		for _, c := range result.checks {
+			if !c.Ok {
+				m.ready = false
+			}
+		}
+		m.statusMsg = ""
+		if result.err != nil {
+			m.statusMsg = result.err.Error()
+		}
+		m.renderReview()
+		return m, nil
 	}
-
-	if km, ok := msg.(tea.KeyMsg); ok {
-		switch km.String() {
+	if m.phase == phaseReview {
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.String() {
+			case "esc":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				m.revision++
+				m.phase = phaseVMIDs
+				m.form.Submitted = false
+				m.ready = false
+				m.checking = false
+				m.statusMsg = ""
+				return m, nil
+			case "enter":
+				if !m.ready || m.submitted {
+					return m, nil
+				}
+				m.submitted = true
+				request := StartBuildMsg{Templates: m.selected, Node: *m.selectedNode, Requests: m.requests}
+				return m, func() tea.Msg { return request }
+			case "r":
+				if !m.checking {
+					cmd := m.beginPreflight()
+					return m, cmd
+				}
+			}
+		}
+		var cmd tea.Cmd
+		m.review, cmd = m.review.Update(msg)
+		return m, cmd
+	}
+	if m.phase == phaseVMIDs {
+		cmd := m.form.Update(msg)
+		if m.form.Cancelled {
+			m.phase = phaseNodes
+			m.cursor = 0
+			m.statusMsg = ""
+			return m, nil
+		}
+		if m.form.Submitted {
+			m.form.Submitted = false
+			return m.prepareReview()
+		}
+		return m, cmd
+	}
+	if k, ok := msg.(tea.KeyMsg); ok {
+		limit := len(m.templates)
+		if m.phase == phaseNodes {
+			limit = len(m.nodes)
+		}
+		switch k.String() {
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
+			m.cursor = max(0, m.cursor-1)
 		case "down", "j":
-			if m.cursor < m.maxIndex() {
-				m.cursor++
-			}
+			m.cursor = min(max(0, limit-1), m.cursor+1)
 		case " ":
 			if m.phase == phaseTemplates && m.cursor < len(m.templates) {
 				m.templates[m.cursor].selected = !m.templates[m.cursor].selected
 			}
 		case "a":
 			if m.phase == phaseTemplates {
-				allSelected := true
+				all := true
 				for _, t := range m.templates {
-					if !t.selected {
-						allSelected = false
-						break
-					}
+					all = all && t.selected
 				}
 				for i := range m.templates {
-					m.templates[i].selected = !allSelected
+					m.templates[i].selected = !all
 				}
-			}
-		case "enter":
-			if m.phase == phaseTemplates {
-				hasSelected := false
-				for _, t := range m.templates {
-					if t.selected {
-						hasSelected = true
-						break
-					}
-				}
-				if !hasSelected {
-					m.statusMsg = "Select at least one template (space to toggle, a to toggle all)"
-					return m, nil
-				}
-				m.phase = phaseNodes
-				m.cursor = 0
-				m.statusMsg = ""
-			} else if m.phase == phaseNodes {
-				if len(m.nodes) == 0 {
-					m.statusMsg = "No nodes configured"
-					return m, nil
-				}
-				// Store selected node
-				node := m.nodes[m.cursor]
-				m.selectedNode = &node
-				// Build VM ID override inputs for selected templates
-				m.vmIDInputs = nil
-				for _, t := range m.templates {
-					if !t.selected {
-						continue
-					}
-					ti := textinput.New()
-					ti.Placeholder = fmt.Sprintf("%d", t.tmpl.VMID)
-					ti.SetValue(fmt.Sprintf("%d", t.tmpl.VMID))
-					ti.CharLimit = 10
-					ti.Width = 8
-					m.vmIDInputs = append(m.vmIDInputs, vmIDOverride{
-						templateName: t.tmpl.Name,
-						defaultVMID:  t.tmpl.VMID,
-						input:        ti,
-					})
-				}
-				if len(m.vmIDInputs) > 0 {
-					m.vmIDInputs[0].input.Focus()
-				}
-				m.phase = phaseVMIDs
-				m.cursor = 0
-				m.statusMsg = ""
-				return m, nil
 			}
 		case "esc":
 			if m.phase == phaseNodes {
 				m.phase = phaseTemplates
 				m.cursor = 0
 				m.statusMsg = ""
-				return m, nil
 			}
-		case "tab":
+		case "enter":
 			if m.phase == phaseTemplates {
+				m.selected = nil
+				for _, t := range m.templates {
+					if t.selected {
+						m.selected = append(m.selected, t.tmpl)
+					}
+				}
+				if len(m.selected) == 0 {
+					m.statusMsg = "Select at least one template with space."
+					return m, nil
+				}
 				m.phase = phaseNodes
 				m.cursor = 0
+				m.statusMsg = ""
 			} else {
-				m.phase = phaseTemplates
-				m.cursor = 0
+				if len(m.nodes) == 0 {
+					m.statusMsg = "No nodes configured. Add a node from the workspace."
+					return m, nil
+				}
+				node := m.nodes[m.cursor]
+				m.selectedNode = &node
+				m.selected = nil
+				var fields []components.FormField
+				for _, t := range m.templates {
+					if t.selected {
+						m.selected = append(m.selected, t.tmpl)
+						fields = append(fields, components.FormField{Label: t.tmpl.Name, Value: strconv.Itoa(t.tmpl.VMID), Required: true})
+					}
+				}
+				if len(fields) == 0 {
+					m.phase = phaseTemplates
+					m.statusMsg = "Select a template first."
+					return m, nil
+				}
+				m.form = components.NewForm("Target VM IDs", fields)
+				m.form.SetSize(m.width, max(6, m.height-6))
+				m.phase = phaseVMIDs
+				m.statusMsg = ""
+				return m, m.form.Fields[0].BlinkCmd()
 			}
-			m.statusMsg = ""
 		}
 	}
 	return m, nil
 }
-
-func (m BuildSelectModel) updateVMIDPhase(msg tea.Msg) (BuildSelectModel, tea.Cmd) {
-	if km, ok := msg.(tea.KeyMsg); ok {
-		switch km.String() {
-		case "tab", "down":
-			m.vmIDInputs[m.cursor].input.Blur()
-			m.cursor = (m.cursor + 1) % len(m.vmIDInputs)
-			return m, m.vmIDInputs[m.cursor].input.Focus()
-		case "shift+tab", "up":
-			m.vmIDInputs[m.cursor].input.Blur()
-			m.cursor = (m.cursor - 1 + len(m.vmIDInputs)) % len(m.vmIDInputs)
-			return m, m.vmIDInputs[m.cursor].input.Focus()
-		case "enter":
-			// If not on last field, go next
-			if m.cursor < len(m.vmIDInputs)-1 {
-				m.vmIDInputs[m.cursor].input.Blur()
-				m.cursor++
-				return m, m.vmIDInputs[m.cursor].input.Focus()
-			}
-			// Last field — validate and start build
-			return m.submitBuild()
-		case "ctrl+s":
-			return m.submitBuild()
-		case "esc":
-			m.phase = phaseNodes
-			m.cursor = 0
-			m.statusMsg = ""
+func (m BuildSelectModel) prepareReview() (BuildSelectModel, tea.Cmd) {
+	m.requests = nil
+	seen := map[int]bool{}
+	for i := range m.selected {
+		id, err := strconv.Atoi(m.form.Value(m.selected[i].Name))
+		if err != nil || id < 100 || id > 999999999 {
+			m.statusMsg = "VM IDs must be between 100 and 999999999."
 			return m, nil
 		}
+		if seen[id] {
+			m.statusMsg = fmt.Sprintf("Duplicate target VM ID %d.", id)
+			return m, nil
+		}
+		seen[id] = true
+		tmpl := m.selected[i]
+		tmpl.VMID = id
+		req, err := buildrun.Prepare(m.db, tmpl, nil)
+		if err != nil {
+			m.statusMsg = tmpl.Name + ": " + err.Error()
+			return m, nil
+		}
+		m.selected[i] = tmpl
+		m.requests = append(m.requests, req)
 	}
-
-	// Update focused input
-	var cmd tea.Cmd
-	m.vmIDInputs[m.cursor].input, cmd = m.vmIDInputs[m.cursor].input.Update(msg)
+	m.phase = phaseReview
+	m.submitted = false
+	m.review.GotoTop()
+	cmd := m.beginPreflight()
 	return m, cmd
 }
-
-func (m BuildSelectModel) submitBuild() (BuildSelectModel, tea.Cmd) {
-	// Validate all VM IDs
-	seen := make(map[int]string)
-	for i := range m.vmIDInputs {
-		val := m.vmIDInputs[i].input.Value()
-		if val == "" {
-			val = fmt.Sprintf("%d", m.vmIDInputs[i].defaultVMID)
-		}
-		vmID, err := strconv.Atoi(val)
+func (m *BuildSelectModel) beginPreflight() tea.Cmd {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.revision++
+	m.ready = false
+	m.checking = true
+	m.checks = nil
+	m.statusMsg = ""
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	m.cancel = cancel
+	m.renderReview()
+	return m.preflight(*m.selectedNode, m.requests, m.revision, ctx)
+}
+func checkBuilds(node models.Node, requests []*pb.BuildRequest, revision uint64, ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		result := preflightResultMsg{revision: revision}
+		client, err := managergrpc.NewClient(node.Address, node.APIKey, node.TLSFingerprint)
 		if err != nil {
-			m.statusMsg = fmt.Sprintf("%s: VM ID must be a number", m.vmIDInputs[i].templateName)
-			return m, nil
+			result.err = err
+			return result
 		}
-		if vmID <= 0 {
-			m.statusMsg = fmt.Sprintf("%s: VM ID must be positive", m.vmIDInputs[i].templateName)
-			return m, nil
+		defer client.Close()
+		for _, req := range requests {
+			response, err := client.Preflight(ctx, &pb.PreflightRequest{Profile: req.Options["profile"], Build: req})
+			if err != nil {
+				result.err = err
+				return result
+			}
+			if len(response.Checks) == 0 {
+				result.err = fmt.Errorf("no preflight results for %s", req.Image.Name)
+				return result
+			}
+			for _, check := range response.Checks {
+				result.checks = append(result.checks, &pb.CheckResult{Name: req.Image.Name + " / " + check.Name, Ok: check.Ok, Message: check.Message})
+			}
 		}
-		if prev, ok := seen[vmID]; ok {
-			m.statusMsg = fmt.Sprintf("Duplicate VM ID %d: %s and %s", vmID, prev, m.vmIDInputs[i].templateName)
-			return m, nil
-		}
-		seen[vmID] = m.vmIDInputs[i].templateName
-	}
-
-	// Build the template list with overridden VM IDs
-	var selected []models.Template
-	idx := 0
-	for _, t := range m.templates {
-		if !t.selected {
-			continue
-		}
-		tmpl := t.tmpl
-		val := m.vmIDInputs[idx].input.Value()
-		if val != "" {
-			vmID, _ := strconv.Atoi(val)
-			tmpl.VMID = vmID
-		}
-		selected = append(selected, tmpl)
-		idx++
-	}
-
-	node := *m.selectedNode
-	return m, func() tea.Msg {
-		return StartBuildMsg{Templates: selected, Node: node}
+		return result
 	}
 }
-
-func (m BuildSelectModel) maxIndex() int {
-	if m.phase == phaseTemplates {
-		return max(0, len(m.templates)-1)
+func (m *BuildSelectModel) renderReview() {
+	if m.selectedNode == nil {
+		return
 	}
-	return max(0, len(m.nodes)-1)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Target node  %s\n\n", m.selectedNode.Label())
+	for _, req := range m.requests {
+		profile := req.Options["profile"]
+		if profile == "" {
+			profile = "default"
+		}
+		fmt.Fprintf(&b, "%s -> VMID %d\n  Profile: %s | Init: %s\n", req.Image.Name, req.Image.Id, profile, req.InitType)
+	}
+	b.WriteString("\nExisting VM policy: stop if VMID exists.\n\nPREFLIGHT\n")
+	if m.checking {
+		b.WriteString("[..] Checking node, storage and target IDs...\n")
+	}
+	for _, check := range m.checks {
+		tag := styles.StatusTag("completed")
+		if !check.Ok {
+			tag = styles.StatusTag("failed")
+		}
+		fmt.Fprintf(&b, "%s %s\n     %s\n", tag, check.Name, check.Message)
+	}
+	if m.statusMsg != "" {
+		b.WriteString(styles.ErrorStyle.Render(m.statusMsg))
+	}
+	m.review.SetContent(ansi.Hardwrap(b.String(), max(1, m.width), true))
 }
-
-// View renders the build selection screen.
 func (m BuildSelectModel) View() string {
-	var b strings.Builder
-	b.WriteString("\n")
-	b.WriteString(styles.TitleStyle.Render(" New Build "))
-	b.WriteString("\n\n")
-
+	stages := []string{"Select", "Node", "VM IDs", "Review"}
+	for i := range stages {
+		if i == m.phase {
+			stages[i] = styles.SelectedStyle.Render("[" + stages[i] + "]")
+		}
+	}
+	heading := styles.BoldStyle.Render("Build a template") + "\n" + strings.Join(stages, " > ") + "\n\n"
+	if m.phase == phaseReview {
+		hint := "Checking... | esc back"
+		if !m.checking {
+			hint = "Blocked | r retry | esc back"
+		}
+		if m.ready {
+			hint = "enter start build | esc edit"
+		}
+		return heading + m.review.View() + "\n" + styles.DimStyle.Render(hint+" | j/k scroll")
+	}
 	if m.phase == phaseVMIDs {
-		return m.viewVMIDPhase()
+		return heading + m.form.View() + "\n" + styles.ErrorStyle.Render(m.statusMsg)
 	}
-
-	// Templates section
-	phase := ""
+	var rows []string
 	if m.phase == phaseTemplates {
-		phase = styles.SelectedStyle.Render(" (active)")
-	}
-	fmt.Fprintf(&b, "  Templates%s\n\n", phase)
-	if len(m.templates) == 0 {
-		b.WriteString(styles.MutedStyle.Render("    No templates. Add some first.\n"))
-	}
-	for i, t := range m.templates {
-		cursor := "  "
-		if m.phase == phaseTemplates && i == m.cursor {
-			cursor = styles.SelectedStyle.Render("> ")
+		for _, t := range m.templates {
+			check := "[ ]"
+			if t.selected {
+				check = "[x]"
+			}
+			rows = append(rows, fmt.Sprintf("%s %s / %d", check, t.tmpl.Name, t.tmpl.VMID))
 		}
-		check := "[ ]"
-		if t.selected {
-			check = styles.SuccessStyle.Render("[x]")
-		}
-		name := t.tmpl.Name
-		if m.phase == phaseTemplates && i == m.cursor {
-			name = styles.SelectedStyle.Render(name)
-		}
-		fmt.Fprintf(&b, "  %s%s %s (VM %d)\n", cursor, check, name, t.tmpl.VMID)
-	}
-
-	b.WriteString("\n")
-
-	// Nodes section
-	phase = ""
-	if m.phase == phaseNodes {
-		phase = styles.SelectedStyle.Render(" (active)")
-	}
-	fmt.Fprintf(&b, "  Target Node%s\n\n", phase)
-	if len(m.nodes) == 0 {
-		b.WriteString(styles.MutedStyle.Render("    No nodes configured. Add one via Nodes menu first.\n"))
-	}
-	for i, n := range m.nodes {
-		cursor := "  "
-		if m.phase == phaseNodes && i == m.cursor {
-			cursor = styles.SelectedStyle.Render("> ")
-		}
-		label := n.Label()
-		if m.phase == phaseNodes && i == m.cursor {
-			label = styles.SelectedStyle.Render(label)
-		}
-		extra := ""
-		if n.DisplayName != "" && n.DisplayName != n.Name {
-			extra = styles.MutedStyle.Render(fmt.Sprintf(" (%s)", n.Name))
-		}
-		fmt.Fprintf(&b, "  %s%s%s  %s\n", cursor, label, extra, styles.MutedStyle.Render(n.Address))
-	}
-
-	b.WriteString("\n")
-	if m.phase == phaseTemplates {
-		b.WriteString(styles.MutedStyle.Render("  space: toggle • a: toggle all • enter: confirm → pick node • tab: switch"))
 	} else {
-		b.WriteString(styles.MutedStyle.Render("  enter: configure VM IDs → start • esc: back • tab: switch"))
-	}
-
-	if m.statusMsg != "" {
-		b.WriteString("\n  " + styles.ErrorStyle.Render(m.statusMsg))
-	}
-
-	return b.String()
-}
-
-func (m BuildSelectModel) viewVMIDPhase() string {
-	var b strings.Builder
-	b.WriteString("\n")
-	b.WriteString(styles.TitleStyle.Render(" New Build — Configure VM IDs "))
-	b.WriteString("\n\n")
-	b.WriteString(styles.MutedStyle.Render("  Override VM IDs or keep defaults:"))
-	b.WriteString("\n\n")
-
-	// Find max template name length for alignment
-	maxLen := 0
-	for _, o := range m.vmIDInputs {
-		if len(o.templateName) > maxLen {
-			maxLen = len(o.templateName)
+		for _, n := range m.nodes {
+			rows = append(rows, n.Label()+" / "+n.Address)
 		}
 	}
-
-	for i, o := range m.vmIDInputs {
+	if len(rows) == 0 {
+		rows = append(rows, "No items. Add definitions and nodes from the workspace.")
+	}
+	visible := max(1, m.height-8)
+	start := max(0, m.cursor-visible+1)
+	for i := start; i < min(len(rows), start+visible); i++ {
+		line := "  " + rows[i]
 		if i == m.cursor {
-			padded := fmt.Sprintf("%-*s", maxLen, o.templateName)
-			fmt.Fprintf(&b, "  %s %s  VM ID: %s\n",
-				styles.SelectedStyle.Render(">"),
-				styles.SelectedStyle.Render(padded),
-				o.input.View())
-		} else {
-			fmt.Fprintf(&b, "    %-*s  VM ID: %s\n", maxLen, o.templateName, o.input.View())
+			line = styles.SelectedStyle.Render("> " + rows[i])
 		}
+		heading += line + "\n"
 	}
-
-	b.WriteString("\n")
-	b.WriteString(styles.MutedStyle.Render("  tab/↑↓: navigate • enter: start build • esc: back"))
-
-	if m.statusMsg != "" {
-		b.WriteString("\n  " + styles.ErrorStyle.Render(m.statusMsg))
+	hint := "space select | a all | enter choose node"
+	if m.phase == phaseNodes {
+		hint = "enter configure VM IDs | esc back"
 	}
-
-	return b.String()
+	return heading + "\n" + styles.DimStyle.Render(hint) + "\n" + styles.ErrorStyle.Render(m.statusMsg)
 }
