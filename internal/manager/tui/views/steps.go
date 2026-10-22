@@ -48,7 +48,7 @@ func NewStepsModel(db *store.DB) StepsModel {
 // SetSize sets the view dimensions.
 func (m *StepsModel) SetSize(w, h int) {
 	m.table.Width = w
-	m.table.Height = h - 4
+	m.table.Height = max(4, h-7)
 	m.width = w
 	m.height = h
 }
@@ -217,6 +217,7 @@ func (m StepsModel) View() string {
 	switch m.mode {
 	case stepsModeAdd, stepsModeEdit:
 		b.WriteString("\n")
+		m.form.SetSize(m.width, m.height-3)
 		b.WriteString(m.form.View())
 		if m.statusMsg != "" {
 			b.WriteString("\n  " + styles.ErrorStyle.Render(m.statusMsg))

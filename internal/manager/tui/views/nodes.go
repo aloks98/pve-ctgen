@@ -58,7 +58,7 @@ func NewNodesModel(db *store.DB) NodesModel {
 // SetSize sets the view dimensions.
 func (m *NodesModel) SetSize(w, h int) {
 	m.table.Width = w
-	m.table.Height = h - 4
+	m.table.Height = max(4, h-7)
 	m.width = w
 	m.height = h
 }
@@ -298,6 +298,7 @@ func (m NodesModel) View() string {
 	switch m.mode {
 	case nodesModeAdd:
 		b.WriteString("\n")
+		m.form.SetSize(m.width, m.height-3)
 		b.WriteString(m.form.View())
 		if m.statusMsg != "" && !strings.HasPrefix(m.statusMsg, "edit:") {
 			b.WriteString("\n  " + styles.MutedStyle.Render(m.statusMsg))

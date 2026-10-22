@@ -26,12 +26,13 @@ func (f *FormField) BlinkCmd() tea.Cmd {
 
 // Form is a multi-field form component with proper text input handling.
 type Form struct {
-	Title    string
-	Fields   []FormField
-	cursor   int
-	focused  bool
-	Submitted bool
-	Cancelled bool
+	width, height int
+	Title         string
+	Fields        []FormField
+	cursor        int
+	focused       bool
+	Submitted     bool
+	Cancelled     bool
 }
 
 // NewForm creates a new Form with the given fields.
@@ -48,8 +49,8 @@ func NewForm(title string, fields []FormField) Form {
 		fields[i].input = ti
 	}
 	return Form{
-		Title:  title,
-		Fields: fields,
+		Title:   title,
+		Fields:  fields,
 		focused: true,
 	}
 }
@@ -100,6 +101,9 @@ func (f *Form) Reset() {
 
 // Update handles key events.
 func (f *Form) Update(msg tea.Msg) tea.Cmd {
+	if len(f.Fields) == 0 {
+		return nil
+	}
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
 		case "tab", "down":
@@ -131,30 +135,38 @@ func (f *Form) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// View renders the form.
+// SetSize keeps the focused field visible even in a small terminal.
+func (f *Form) SetSize(w, h int) {
+	f.width = w
+	f.height = h
+	for i := range f.Fields {
+		f.Fields[i].input.Width = max(5, w-6)
+	}
+}
+
 func (f *Form) View() string {
-	var b strings.Builder
-
-	b.WriteString(styles.TitleStyle.Render(fmt.Sprintf(" %s ", f.Title)))
-	b.WriteString("\n\n")
-
-	for i, field := range f.Fields {
+	width, height := f.width, f.height
+	if width <= 0 {
+		width = 76
+	}
+	if height <= 0 {
+		height = 24
+	}
+	visible := max(1, (height-5)/2)
+	start := max(0, f.cursor-visible+1)
+	lines := []string{styles.BoldStyle.Render(f.Title), ""}
+	for i := start; i < min(len(f.Fields), start+visible); i++ {
+		field := f.Fields[i]
 		label := field.Label
 		if field.Required {
 			label += " *"
 		}
-
-		cursor := "  "
+		prefix := "  "
 		if i == f.cursor {
-			cursor = styles.SelectedStyle.Render("> ")
+			prefix = "> "
 		}
-
-		b.WriteString(fmt.Sprintf("  %s%-18s %s\n", cursor, label+":", field.input.View()))
+		lines = append(lines, styles.AccentStyle.Render(prefix+label), "  "+field.input.View())
 	}
-
-	b.WriteString("\n")
-	b.WriteString(styles.MutedStyle.Render("  tab/↑↓: navigate fields • enter: next/submit • esc: cancel"))
-	b.WriteString("\n")
-
-	return b.String()
+	lines = append(lines, "", styles.DimStyle.Render(fmt.Sprintf("Field %d/%d | tab next | enter save | esc cancel", f.cursor+1, len(f.Fields))))
+	return strings.Join(lines, "\n")
 }

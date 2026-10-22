@@ -4,22 +4,21 @@ import "github.com/charmbracelet/lipgloss"
 
 var (
 	// Colors — muted palette, btop-inspired
-	Primary    = lipgloss.Color("#5F87FF") // soft blue
-	Accent     = lipgloss.Color("#87D7AF") // teal-green
-	Highlight  = lipgloss.Color("#FFD787") // warm yellow
-	Success    = lipgloss.Color("#87D787") // green
-	Error      = lipgloss.Color("#FF8787") // red
-	Warning    = lipgloss.Color("#FFD787") // yellow
-	Muted      = lipgloss.Color("#585858") // dark gray
-	Dim        = lipgloss.Color("#808080") // medium gray
-	White      = lipgloss.Color("#E4E4E4") // off-white
-	BgSelected = lipgloss.Color("#303030") // subtle bg highlight
+	Primary    = lipgloss.AdaptiveColor{Light: "#2855b8", Dark: "#90AEFF"} // soft blue
+	Accent     = lipgloss.AdaptiveColor{Light: "#286447", Dark: "#8DD7B0"} // teal-green
+	Highlight  = lipgloss.AdaptiveColor{Light: "#815900", Dark: "#F0CB82"} // warm yellow
+	Success    = lipgloss.AdaptiveColor{Light: "#286447", Dark: "#8DD7B0"} // green
+	Error      = lipgloss.AdaptiveColor{Light: "#A22D3D", Dark: "#F59AAB"} // red
+	Warning    = lipgloss.AdaptiveColor{Light: "#815900", Dark: "#F0CB82"} // yellow
+	Muted      = lipgloss.AdaptiveColor{Light: "#697586", Dark: "#8695A8"} // dark gray
+	Dim        = lipgloss.AdaptiveColor{Light: "#536276", Dark: "#96A4B6"} // medium gray
+	White      = lipgloss.AdaptiveColor{Light: "#263345", Dark: "#D9E2EE"} // off-white
+	BgSelected = lipgloss.AdaptiveColor{Light: "#DFE8FF", Dark: "#25354F"} // subtle bg highlight
 
 	// Title bar — full width, inverted
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#1C1C1C")).
-			Background(Primary).
+			Foreground(Primary).
 			Padding(0, 1)
 
 	// Section headers inside panels

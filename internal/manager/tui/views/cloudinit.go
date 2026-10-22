@@ -67,7 +67,7 @@ func NewCloudInitModel(db *store.DB) CloudInitModel {
 // SetSize sets the view dimensions.
 func (m *CloudInitModel) SetSize(w, h int) {
 	m.table.Width = w
-	m.table.Height = h - 4
+	m.table.Height = max(4, h-7)
 	m.width = w
 	m.height = h
 	vpHeight := h - 5 // title + help + padding

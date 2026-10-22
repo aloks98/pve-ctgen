@@ -80,6 +80,18 @@ func (m *BuildSelectModel) Refresh() {
 	m.nodes, _ = m.db.ListNodes()
 }
 
+// SelectTemplate begins a build with the definition chosen in the workspace.
+func (m *BuildSelectModel) SelectTemplate(name string) {
+	m.Refresh()
+	for i := range m.templates {
+		if m.templates[i].tmpl.Name == name {
+			m.templates[i].selected = true
+			m.phase = phaseNodes
+			return
+		}
+	}
+}
+
 // InSubView returns true so esc/q don't navigate away while in sub-phases.
 func (m *BuildSelectModel) InSubView() bool {
 	return m.phase > phaseTemplates

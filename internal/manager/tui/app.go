@@ -194,7 +194,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Backgrounded — still process events but don't show them
 		return m, cmd
 
+	case views.BuildTemplateMsg:
+		if m.buildProgress.Running() {
+			m.currentView = ViewBuildProgress
+			return m, nil
+		}
+		m.buildSelect.SelectTemplate(msg.Name)
+		m.currentView = ViewBuildSelect
+		return m, nil
+
 	case views.StartBuildMsg:
+		if m.buildProgress.Running() {
+			return m, nil
+		}
 		// Template + node selected — launch the build
 		events := make(chan *pb.BuildEvent, 100)
 		m.buildProgress.Reset(events)

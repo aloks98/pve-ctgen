@@ -55,6 +55,10 @@ func (t *Table) Update(msg tea.Msg) {
 			if t.Cursor < len(t.Rows)-1 {
 				t.Cursor++
 			}
+		case "pgdown":
+			t.Cursor = min(max(0, len(t.Rows)-1), t.Cursor+max(1, t.Height-3))
+		case "pgup":
+			t.Cursor = max(0, t.Cursor-max(1, t.Height-3))
 		case "home", "g":
 			t.Cursor = 0
 		case "end", "G":
@@ -65,89 +69,83 @@ func (t *Table) Update(msg tea.Msg) {
 	}
 }
 
-// View renders the table.
+// View renders a bounded table with display-cell-safe columns and a visible cursor.
 func (t *Table) View() string {
 	if len(t.Headers) == 0 {
 		return ""
 	}
-
-	var b strings.Builder
-
-	// Header row
-	var headerParts []string
-	for i, h := range t.Headers {
-		w := t.colWidth(i)
-		headerParts = append(headerParts, styles.TableHeaderStyle.Width(w).Render(h))
+	width := t.Width
+	if width <= 0 {
+		width = 80
 	}
-	b.WriteString(strings.Join(headerParts, styles.MutedStyle.Render(" ")))
-	b.WriteString("\n")
-
-	// Separator
-	var sepParts []string
-	for i := range t.Headers {
-		w := t.colWidth(i)
-		sepParts = append(sepParts, styles.MutedStyle.Render(strings.Repeat("-", w)))
+	columns := min(len(t.Headers), max(1, width/5))
+	budget := max(columns, width-columns+1)
+	widths := make([]int, columns)
+	for i := range widths {
+		widths[i] = max(3, t.colWidth(i))
 	}
-	b.WriteString(strings.Join(sepParts, styles.MutedStyle.Render("-")))
-	b.WriteString("\n")
-
-	// Empty state
-	if len(t.Rows) == 0 {
-		b.WriteString(styles.DimStyle.Render(" (empty)"))
-		return b.String()
-	}
-
-	// Visible rows with scrolling
-	visibleRows := t.Height - 3
-	if visibleRows <= 0 {
-		visibleRows = len(t.Rows)
-	}
-
-	start := 0
-	if t.Cursor >= visibleRows {
-		start = t.Cursor - visibleRows + 1
-	}
-	end := start + visibleRows
-	if end > len(t.Rows) {
-		end = len(t.Rows)
-	}
-
-	for i := start; i < end; i++ {
-		row := t.Rows[i]
-		var cells []string
-		for j := range t.Headers {
-			w := t.colWidth(j)
-			val := ""
-			if j < len(row) {
-				val = row[j]
-			}
-			if len(val) > w-1 && w > 4 {
-				val = val[:w-4] + "..."
-			}
-			style := styles.TableRowStyle.Width(w)
-			if i == t.Cursor {
-				style = styles.TableSelectedRowStyle.Width(w)
-			}
-			cells = append(cells, style.Render(val))
+	sum := func() int {
+		n := 0
+		for _, w := range widths {
+			n += w
 		}
-		b.WriteString(strings.Join(cells, " "))
-		b.WriteString("\n")
+		return n
 	}
-
-	// Scroll indicator
-	if len(t.Rows) > visibleRows {
-		b.WriteString(styles.DimStyle.Render(fmt.Sprintf(" %d/%d", t.Cursor+1, len(t.Rows))))
+	for sum() > budget {
+		largest := 0
+		for i := range widths {
+			if widths[i] > widths[largest] {
+				largest = i
+			}
+		}
+		if widths[largest] <= 1 {
+			break
+		}
+		widths[largest]--
 	}
-
-	return b.String()
+	widths[0] += max(0, budget-sum())
+	renderRow := func(row []string, selected, header bool) string {
+		cells := make([]string, columns)
+		for i := range cells {
+			value := ""
+			if i < len(row) {
+				value = row[i]
+			}
+			if i == 0 && !header {
+				if selected {
+					value = "> " + value
+				} else {
+					value = "  " + value
+				}
+			}
+			style := styles.TableRowStyle
+			if header {
+				style = styles.TableHeaderStyle
+			} else if selected {
+				style = styles.TableSelectedRowStyle
+			}
+			cells[i] = style.Render(styles.Fit(value, widths[i], 1))
+		}
+		return strings.Join(cells, " ")
+	}
+	lines := []string{renderRow(t.Headers, false, true), styles.MutedStyle.Render(strings.Repeat("-", width))}
+	if len(t.Rows) == 0 {
+		return strings.Join(append(lines, styles.DimStyle.Render("No items found.")), "\n")
+	}
+	visible := max(1, t.Height-3)
+	start := max(0, t.Cursor-visible+1)
+	for i := start; i < min(len(t.Rows), start+visible); i++ {
+		lines = append(lines, renderRow(t.Rows[i], i == t.Cursor, false))
+	}
+	if len(t.Rows) > visible {
+		lines = append(lines, styles.DimStyle.Render(fmt.Sprintf("%d / %d  pgup/pgdown", t.Cursor+1, len(t.Rows))))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (t *Table) colWidth(i int) int {
 	if i < len(t.ColWidths) {
 		return t.ColWidths[i]
-	}
-	if t.Width > 0 && len(t.Headers) > 0 {
-		return t.Width / len(t.Headers)
 	}
 	return 20
 }
