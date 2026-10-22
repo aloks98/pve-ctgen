@@ -44,6 +44,10 @@ profiles:
     ssh_authorized_keys: []
     # Cloud-init guests only; Flatcar keeps its native containerd runtime.
     install_docker: false
+    # Full first-boot OS upgrade and weekly maintenance are opt-in.
+    # package_upgrade: true # omitted preserves the init config policy
+    package_cleanup: false
+    journal_retention_days: 0 # 0 leaves journal retention to the distro
     timezone: UTC
     # Optional, for Debian/Ubuntu guests only:
     apt_proxy: ""

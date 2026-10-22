@@ -125,15 +125,18 @@ type BuildStepResult struct {
 
 // BuildProfile describes node resources and optional site-specific guest settings.
 type BuildProfile struct {
-	InstallDocker     bool     `yaml:"install_docker"`
-	Storage           string   `yaml:"storage"`
-	SnippetStorage    string   `yaml:"snippet_storage"`
-	SnippetsPath      string   `yaml:"snippets_path"`
-	Bridge            string   `yaml:"bridge"`
-	DiskSize          string   `yaml:"disk_size"`
-	DiskFormat        string   `yaml:"disk_format"`
-	SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys"`
-	SSHKeysMode       string   `yaml:"ssh_keys_mode"` // merge (default) or replace
-	Timezone          string   `yaml:"timezone"`
-	AptProxy          string   `yaml:"apt_proxy"`
+	PackageUpgrade       *bool    `yaml:"package_upgrade"`
+	PackageCleanup       bool     `yaml:"package_cleanup"`
+	JournalRetentionDays int      `yaml:"journal_retention_days"`
+	InstallDocker        bool     `yaml:"install_docker"`
+	Storage              string   `yaml:"storage"`
+	SnippetStorage       string   `yaml:"snippet_storage"`
+	SnippetsPath         string   `yaml:"snippets_path"`
+	Bridge               string   `yaml:"bridge"`
+	DiskSize             string   `yaml:"disk_size"`
+	DiskFormat           string   `yaml:"disk_format"`
+	SSHAuthorizedKeys    []string `yaml:"ssh_authorized_keys"`
+	SSHKeysMode          string   `yaml:"ssh_keys_mode"` // merge (default) or replace
+	Timezone             string   `yaml:"timezone"`
+	AptProxy             string   `yaml:"apt_proxy"`
 }

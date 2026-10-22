@@ -13,13 +13,19 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 	if p.SSHKeysMode != "" && p.SSHKeysMode != "merge" && p.SSHKeysMode != "replace" {
 		return nil, fmt.Errorf("ssh_keys_mode must be merge or replace")
 	}
+	if p.JournalRetentionDays < 0 || p.JournalRetentionDays > 36500 {
+		return nil, fmt.Errorf("journal_retention_days must be between 0 and 36500")
+	}
 	if len(content) == 0 {
+		if p.InstallDocker || p.PackageUpgrade != nil || p.PackageCleanup || p.JournalRetentionDays != 0 {
+			return nil, fmt.Errorf("guest provisioning options require cloud-init content")
+		}
 		return content, nil
 	}
 	var cfg map[string]interface{}
 	if initType == "ignition" {
-		if p.InstallDocker {
-			return nil, fmt.Errorf("install_docker requires cloud-init; Flatcar uses containerd")
+		if p.InstallDocker || p.PackageUpgrade != nil || p.PackageCleanup || p.JournalRetentionDays != 0 {
+			return nil, fmt.Errorf("Docker and package/journal maintenance options require cloud-init; Flatcar manages its own OS and containerd")
 		}
 		if err := json.Unmarshal(content, &cfg); err != nil {
 			return nil, err
@@ -84,17 +90,9 @@ func ApplyProfile(content []byte, initType string, p models.BuildProfile) ([]byt
 		if !found {
 			return nil, fmt.Errorf("install_docker requires %s in cloud-init write_files", installer)
 		}
-		commands, _ := cfg["runcmd"].([]interface{})
-		alreadyScheduled := false
-		for _, command := range commands {
-			if command == installer {
-				alreadyScheduled = true
-			}
-		}
-		if !alreadyScheduled {
-			cfg["runcmd"] = append(commands, installer)
-		}
+		appendCommand(cfg, installer)
 	}
+	applyMaintenance(cfg, p)
 	data, err := yaml.Marshal(cfg)
 	return append([]byte("#cloud-config\n"), data...), err
 }

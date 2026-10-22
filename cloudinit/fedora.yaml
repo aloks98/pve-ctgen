@@ -1,7 +1,7 @@
 #cloud-config
 preserve_hostname: false
 manage_etc_hosts: true
-package_upgrade: true
+package_upgrade: false
 timezone: UTC
 
 ssh_deletekeys: true
@@ -143,13 +143,6 @@ write_files:
       MaxAuthTries 3
       ClientAliveInterval 300
       ClientAliveCountMax 2
-
-  - path: /etc/cron.weekly/system-cleanup
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      dnf autoremove -y -q
-      journalctl --vacuum-time=7d 2>/dev/null || true
 
   - path: /etc/ssh/sshd_config.d/no-accept-locale.conf
     permissions: "0644"

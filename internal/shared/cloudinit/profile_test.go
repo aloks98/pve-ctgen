@@ -104,3 +104,55 @@ func TestDockerOptIn(t *testing.T) {
 		}
 	}
 }
+
+func TestMaintenancePolicy(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name             string
+		profile          models.BuildProfile
+		upgrade          bool
+		files            int
+		cleanup, journal bool
+	}{
+		{name: "preserve", upgrade: true},
+		{name: "disable upgrade", profile: models.BuildProfile{PackageUpgrade: &no}},
+		{name: "enable upgrade", profile: models.BuildProfile{PackageUpgrade: &yes}, upgrade: true},
+		{name: "cleanup only", profile: models.BuildProfile{PackageCleanup: true}, upgrade: true, files: 3, cleanup: true},
+		{name: "journal only", profile: models.BuildProfile{JournalRetentionDays: 30}, upgrade: true, files: 3, journal: true},
+		{name: "both", profile: models.BuildProfile{PackageCleanup: true, JournalRetentionDays: 30}, upgrade: true, files: 3, cleanup: true, journal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ApplyProfile([]byte("package_upgrade: true\n"), "cloudinit", tc.profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err = ApplyProfile(out, "cloudinit", tc.profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg struct {
+				Upgrade  bool                       `yaml:"package_upgrade"`
+				Files    []struct{ Content string } `yaml:"write_files"`
+				Commands []string                   `yaml:"runcmd"`
+			}
+			if err := yaml.Unmarshal(out, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Upgrade != tc.upgrade || len(cfg.Files) != tc.files {
+				t.Fatalf("unexpected policy: %s", out)
+			}
+			if tc.files > 0 {
+				if len(cfg.Commands) != 2 || strings.Contains(cfg.Files[0].Content, "autoremove") != tc.cleanup || strings.Contains(cfg.Files[0].Content, "--vacuum-time=30d") != tc.journal {
+					t.Fatalf("incorrect maintenance: %s", out)
+				}
+			} else if len(cfg.Commands) != 0 {
+				t.Fatalf("default scheduled maintenance: %s", out)
+			}
+		})
+	}
+	for _, p := range []models.BuildProfile{{JournalRetentionDays: -1}, {JournalRetentionDays: 36501}, {PackageCleanup: true}, {PackageUpgrade: &no}} {
+		if _, err := ApplyProfile([]byte(`{}`), "ignition", p); err == nil {
+			t.Fatalf("unsupported Ignition policy accepted: %+v", p)
+		}
+	}
+}
