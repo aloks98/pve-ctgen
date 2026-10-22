@@ -44,7 +44,7 @@
     "name": "fedora43",
     "url": "https://isoman.e412.in/images/fedora/43/x86_64/fedora-43-cloud-x86_64.qcow2",
     "checksum_url": "https://isoman.e412.in/images/fedora/43/x86_64/fedora-43-cloud-x86_64.qcow2.sha256",
-    "tags": "fedora-template,42,cloudinit",
+    "tags": "fedora-template,43,cloudinit",
     "vendor": "fedora.yaml"
   },
   {
